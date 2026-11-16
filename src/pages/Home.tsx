@@ -1,7 +1,11 @@
 import React, { useState, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { UploadCloud, Loader2, FileCheck2, XCircle, ArrowRight, FileText, Layers, Presentation, MessageSquare, BookOpen, ArrowLeft, Info, Sparkles } from 'lucide-react';
+import { 
+  UploadCloud, Loader2, FileCheck2, XCircle, ArrowRight, FileText, 
+  Layers, BookOpen, ArrowLeft, Info, Sparkles, Cpu, Send, Edit3, 
+  PlayCircle, Clock, Flame, Zap, Award, CheckCircle2, ShieldCheck 
+} from 'lucide-react';
 import { cn } from '../lib/utils';
 
 type ViewMode = 'menu' | 'upload' | 'guide';
@@ -14,6 +18,9 @@ export default function Home() {
   const [dragActive, setDragActive] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showInvalid, setShowInvalid] = useState(false);
+  const [generatedQuizId, setGeneratedQuizId] = useState<string | null>(null);
+  const [generatedQuizMeta, setGeneratedQuizMeta] = useState<any>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -56,14 +63,12 @@ export default function Home() {
   };
 
   const isValidFile = (file: File) => {
-    if (file.size > 1 * 1024 * 1024) {
-       setError("Fayl hajmi juda katta (maksimal 1MB). Iltimos, asosan matndan iborat kichikroq fayldan foydalaning.");
+    if (file.size > 15 * 1024 * 1024) {
+       setError("Fayl hajmi juda katta (maksimal 15MB). Kichikroq fayl tanlang.");
        return false;
     }
-    return file.type === 'application/pdf' || 
-           file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || 
-           file.name.endsWith('.pdf') || 
-           file.name.endsWith('.docx');
+    const name = file.name.toLowerCase();
+    return name.endsWith('.pdf') || name.endsWith('.docx') || name.endsWith('.txt');
   };
 
   const generateQuiz = async () => {
@@ -74,34 +79,27 @@ export default function Home() {
 
     const progressInterval = setInterval(() => {
       setUploadProgress(prev => {
-        if (prev >= 95) return prev;
-        return prev + Math.random() * 15;
+        if (prev >= 90) return prev;
+        return prev + Math.random() * 20;
       });
-    }, 300);
+    }, 180);
 
     try {
       const formData = new FormData();
       formData.append('file', file);
+      formData.append('userId', user.uid);
 
       const response = await fetch('/api/generate-quiz', {
         method: 'POST',
         body: formData,
-        // credentials: 'omit' to ensure no cross-origin weirdness on first-party context,
-        // though typically it's same-origin so defaults apply.
       });
 
       const rawText = await response.text();
-      
-      // Cookie check HTML or Vite dev server proxy page checks
-      if (rawText.includes('<title>Cookie check</title>') || rawText.includes('__SECURE-aistudio') || rawText.includes('<div id="root">')) {
-        throw new Error("Brauzer xavfsizlik tizimi so'rovni to'xtatdi. Ilovani to'liq ishlashi uchun tepa o'ng burchakdagi 'Open in New Tab' (Yangi oynada ochish) tugmasi orqali alohida oynada oching.");
-      }
-
       let data;
       try {
          data = JSON.parse(rawText);
       } catch(parseErr) {
-         console.error("Raw response length:", rawText.length, "content:", rawText.substring(0, 50));
+         console.error("Raw response:", rawText.substring(0, 100));
          throw new Error("Tizim fayl formatini o'qiy olmadi yoki hujjat juda katta.");
       }
 
@@ -109,26 +107,49 @@ export default function Home() {
         throw new Error(data.error || "Test yaratishda xatolik yuz berdi");
       }
 
-      if (!data.questions || !Array.isArray(data.questions)) {
-        throw new Error("Yaroqsiz test formati olindi");
+      if (!data.questions || !Array.isArray(data.questions) || data.questions.length === 0) {
+        throw new Error("Hujjatdan test savollari topilmadi.");
       }
 
       clearInterval(progressInterval);
       setUploadProgress(100);
-      await new Promise(r => setTimeout(r, 400)); 
+      await new Promise(r => setTimeout(r, 300)); 
 
       const quizId = Math.random().toString(36).substring(7);
+      const quizTitle = file.name.replace(/\.[^/.]+$/, "");
+
       const newQuiz = {
         id: quizId,
         userId: user.uid,
-        title: file.name.replace(/\.[^/.]+$/, ""),
+        title: quizTitle,
         sourceFileName: file.name,
+        source: data.source || 'hemis',
+        formatType: data.formatType,
         questions: data.questions,
         createdAt: new Date().toISOString()
       };
       
+      // SQLite bazaga saqlash
+      try {
+        await fetch('/api/quizzes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: quizId,
+            userId: user.uid,
+            title: quizTitle,
+            sourceType: data.source || 'hemis',
+            questions: data.questions,
+            timeLimitMinutes: 0
+          })
+        });
+      } catch (beErr) {
+        console.warn("Backend save fallback to localStorage:", beErr);
+      }
+
       localStorage.setItem(`quiz_${quizId}`, JSON.stringify(newQuiz));
-      navigate(`/quiz/${quizId}`);
+      setGeneratedQuizId(quizId);
+      setGeneratedQuizMeta(newQuiz);
 
     } catch (err: any) {
       clearInterval(progressInterval);
@@ -140,306 +161,374 @@ export default function Home() {
     }
   };
 
+  // 1. Fayl yuklash oynasi
   if (view === 'upload') {
     return (
-      <div className="max-w-2xl mx-auto w-full pt-8 pb-20 px-4 md:px-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="max-w-2xl mx-auto w-full pt-6 pb-24 px-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <button 
-          onClick={() => setView('menu')}
-          className="flex items-center gap-2 text-zinc-400 hover:text-zinc-900 mb-8 font-medium transition-colors group"
+          onClick={() => {
+            setView('menu');
+            setGeneratedQuizId(null);
+            setFile(null);
+          }}
+          className="flex items-center gap-2 text-slate-400 hover:text-white mb-6 font-bold text-xs transition-colors group bg-white/5 border border-white/10 px-4 py-2 rounded-full w-fit"
         >
-          <div className="p-2 border border-zinc-200 rounded-full group-hover:bg-zinc-100 transition-colors">
-             <ArrowLeft className="w-4 h-4" />
-          </div>
-          <span>Orqaga</span>
+          <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+          <span>Orqaga qaytish</span>
         </button>
 
-        <div className="mb-8">
-          <h1 className="text-3xl md:text-4xl font-[800] tracking-tight mb-3 text-zinc-900">
-            Faylni yuklang
-          </h1>
-          <p className="text-zinc-500 text-sm leading-relaxed max-w-md">
-            Hujjatingizni tashlang, qolgan barcha ishni tizim algoritmlari o'zi bajaradi. Interaktiv test tayyorlanadi.
-          </p>
-        </div>
+        {generatedQuizId && generatedQuizMeta ? (
+          <div className="glass-card rounded-[2.5rem] p-8 md:p-10 text-center relative overflow-hidden animated-gradient-border">
+            <div className="w-20 h-20 bg-emerald-500/10 border-2 border-emerald-500/30 text-emerald-400 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-500/20">
+              <FileCheck2 className="w-10 h-10" />
+            </div>
 
-        <div className="bg-white rounded-[2rem] p-4 shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-zinc-200/60">
-          <div 
-            className={cn(
-              "border-2 border-dashed rounded-[1.5rem] p-12 flex flex-col items-center justify-center transition-all duration-300 cursor-pointer text-center relative overflow-hidden",
-              dragActive ? "border-indigo-500 bg-indigo-50/50 scale-[1.01]" : "border-zinc-200 bg-zinc-50/50 hover:border-zinc-300 hover:bg-zinc-50",
-              file && !showInvalid ? "border-green-400 bg-green-50/30" : "",
-              showInvalid ? "border-red-400 bg-red-50/50" : "",
-              loading ? "opacity-70 pointer-events-none" : ""
-            )}
-            onDragEnter={handleDrag}
-            onDragLeave={handleDrag}
-            onDragOver={handleDrag}
-            onDrop={handleDrop}
-            onClick={() => !file && fileInputRef.current?.click()}
-          >
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" 
-              onChange={handleFileChange}
-            />
+            <span className="text-[11px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/10 px-4 py-1.5 rounded-full border border-emerald-500/30 mb-4 inline-block">
+              {generatedQuizMeta.source === 'hemis' ? "⚡ HEMIS Tahlil (0 AI Sarfi)" : "✨ Gemini 2.5 Flash"}
+            </span>
 
-            {!file ? (
-              <>
-                <div className={cn(
-                  "w-20 h-20 rounded-full flex items-center justify-center mb-6 transition-all duration-500 ease-out shadow-sm",
-                  dragActive ? "bg-indigo-600 text-white scale-110 shadow-indigo-200" : "bg-white text-zinc-900 border border-zinc-200 shadow-zinc-100"
-                )}>
-                  {showInvalid ? (
-                    <XCircle className="w-8 h-8 text-red-500" />
-                  ) : (
-                    <UploadCloud className="w-8 h-8" />
-                  )}
-                </div>
-                <p className="text-lg font-bold text-zinc-800 mb-1">
-                  {showInvalid ? "Kechirasiz, yaroqsiz format" : (dragActive ? "Faylni shu yerda qo'yib yuboring" : "Tanlash uchun bosing yoki tashlang")}
-                </p>
-                <p className="text-sm text-zinc-400 font-medium">
-                  PDF yoki Word hujjatlari (Max. 1MB)
-                </p>
-              </>
-            ) : (
-              <div className="flex flex-col items-center justify-center w-full relative z-10 animate-in fade-in zoom-in-95 duration-300">
-                <div className="w-20 h-20 bg-green-500 text-white shadow-xl shadow-green-500/20 rounded-full flex items-center justify-center mb-5">
-                  <FileCheck2 className="w-10 h-10" />
-                </div>
-                <p className="text-lg font-bold text-zinc-900 break-words w-full px-4 mb-1">{file.name}</p>
-                <p className="text-sm text-zinc-400 font-medium">{(file.size / 1024).toFixed(1)} KB</p>
-                
-                {loading ? (
-                   <div className="w-full max-w-sm mx-auto mt-8">
-                     <div className="flex justify-between text-xs font-bold text-zinc-500 mb-2.5 uppercase tracking-widest">
-                       <span className="text-indigo-600">
-                         {uploadProgress < 30 ? "Yuklanmoqda..." : 
-                          uploadProgress < 70 ? "Matn o'qilmoqda..." : "Generatsiya..."}
-                       </span>
-                       <span>{Math.round(uploadProgress)}%</span>
-                     </div>
-                     <div className="h-2 w-full bg-zinc-100 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-indigo-600 transition-all duration-300 ease-out relative rounded-full" 
-                          style={{ width: `${uploadProgress}%` }}
-                        >
-                          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full animate-[shimmer_1.5s_infinite]"></div>
-                        </div>
-                     </div>
-                  </div>
+            <h2 className="text-2xl md:text-3xl font-black text-white mb-3">{generatedQuizMeta.title}</h2>
+            <p className="text-sm text-slate-300 font-medium mb-8 max-w-md mx-auto">
+              Jami <strong className="text-emerald-400 font-extrabold">{generatedQuizMeta.questions.length} ta savol</strong> muvaffaqiyatli tahlil qilindi va doimiy bazaga saqlandi.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+              <button
+                onClick={() => navigate(`/quiz/${generatedQuizId}`)}
+                className="py-4 px-5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-blue-600/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-95"
+              >
+                <PlayCircle className="w-4 h-4" /> Boshlash
+              </button>
+
+              <button
+                onClick={() => navigate(`/editor/${generatedQuizId}`)}
+                className="py-4 px-5 bg-white/10 hover:bg-white/15 text-white font-bold text-xs uppercase tracking-wider rounded-2xl border border-white/15 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-95"
+              >
+                <Edit3 className="w-4 h-4 text-amber-400" /> Tahrirlash
+              </button>
+
+              <button
+                onClick={() => navigate(`/flashcards/${generatedQuizId}`)}
+                className="py-4 px-5 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 font-bold text-xs uppercase tracking-wider rounded-2xl border border-emerald-500/30 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-95"
+              >
+                <Layers className="w-4 h-4 text-emerald-400" /> Kartochkalar
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="mb-6">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[11px] font-black uppercase tracking-wider mb-2">
+                <Cpu className="w-3.5 h-3.5" /> HEMIS Parser & Gemini AI
+              </span>
+              <h1 className="text-3xl md:text-4xl font-black tracking-tight text-white mb-2">
+                Test Hujjatini Yuklang
+              </h1>
+              <p className="text-slate-400 text-xs sm:text-sm leading-relaxed">
+                Word (.docx), PDF yoki TXT testlaringizni tashlang. HEMIS testlari soniyaning yuzdan bir ulushida testga aylanadi.
+              </p>
+            </div>
+
+            <div className="glass-card rounded-[2.5rem] p-4 border border-white/10">
+              <div 
+                className={cn(
+                  "border-2 border-dashed rounded-[2rem] p-10 sm:p-14 flex flex-col items-center justify-center transition-all duration-300 cursor-pointer text-center relative overflow-hidden",
+                  dragActive ? "border-blue-500 bg-blue-500/10 scale-[1.01]" : "border-white/15 bg-white/[0.02] hover:border-blue-500/50 hover:bg-blue-500/5",
+                  file && !showInvalid ? "border-emerald-500/80 bg-emerald-500/10" : "",
+                  showInvalid ? "border-red-500/80 bg-red-500/10" : "",
+                  loading ? "opacity-75 pointer-events-none" : ""
+                )}
+                onDragEnter={handleDrag}
+                onDragLeave={handleDrag}
+                onDragOver={handleDrag}
+                onDrop={handleDrop}
+                onClick={() => !file && fileInputRef.current?.click()}
+              >
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  className="hidden" 
+                  accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" 
+                  onChange={handleFileChange}
+                />
+
+                {!file ? (
+                  <>
+                    <div className={cn(
+                      "w-20 h-20 rounded-3xl flex items-center justify-center mb-5 transition-all duration-500 ease-out shadow-2xl",
+                      dragActive ? "bg-blue-600 text-white scale-110 shadow-blue-500/50" : "bg-gradient-to-tr from-blue-600 to-indigo-600 text-white shadow-blue-600/30"
+                    )}>
+                      {showInvalid ? (
+                        <XCircle className="w-9 h-9 text-red-300" />
+                      ) : (
+                        <UploadCloud className="w-9 h-9" />
+                      )}
+                    </div>
+                    <p className="text-lg font-black text-white mb-1.5">
+                      {showInvalid ? "Yaroqsiz format" : (dragActive ? "Faylni shu yerga qo'yib yuboring" : "Tanlash uchun bosing yoki tashlang")}
+                    </p>
+                    <p className="text-xs text-slate-400 font-semibold">
+                      Word (.docx), PDF (.pdf) yoki Matn (.txt) (Maks. 15MB)
+                    </p>
+                  </>
                 ) : (
-                  <button 
-                    onClick={(e) => { e.stopPropagation(); setFile(null); }}
-                    className="mt-6 text-xs uppercase tracking-widest font-bold text-red-500 hover:text-white hover:bg-red-500 border border-red-200 transition-all px-6 py-2.5 rounded-full"
-                  >
-                    Boshqa fayl tanlash
-                  </button>
+                  <div className="flex flex-col items-center justify-center w-full relative z-10 animate-in fade-in zoom-in-95 duration-300">
+                    <div className="w-20 h-20 bg-emerald-500 text-white shadow-2xl shadow-emerald-500/40 rounded-3xl flex items-center justify-center mb-5">
+                      <FileCheck2 className="w-10 h-10" />
+                    </div>
+                    <p className="text-base font-black text-white break-words w-full px-4 mb-1">{file.name}</p>
+                    <p className="text-xs text-slate-400 font-bold">{(file.size / 1024).toFixed(1)} KB</p>
+                    
+                    {loading ? (
+                       <div className="w-full max-w-sm mx-auto mt-6">
+                         <div className="flex justify-between text-xs font-black text-slate-300 mb-2 uppercase tracking-widest">
+                           <span className="text-blue-400">
+                             {uploadProgress < 40 ? "Yuklanmoqda..." : 
+                              uploadProgress < 80 ? "HEMIS / AI Tahlil..." : "Tayyorlanmoqda..."}
+                           </span>
+                           <span>{Math.round(uploadProgress)}%</span>
+                         </div>
+                         <div className="h-2.5 w-full bg-white/10 rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-400 transition-all duration-300 rounded-full relative" 
+                              style={{ width: `${uploadProgress}%` }}
+                            >
+                              <div className="absolute inset-0 bg-white/30 animate-[shimmer_1.5s_infinite]"></div>
+                            </div>
+                         </div>
+                      </div>
+                    ) : (
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setFile(null); }}
+                        className="mt-6 text-xs uppercase tracking-widest font-black text-red-400 hover:text-white hover:bg-red-500 border border-red-500/30 transition-all px-6 py-2.5 rounded-full"
+                      >
+                        Boshqa fayl tanlash
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
-          </div>
 
-          {error && (
-            <div className="mt-4 p-4 rounded-2xl bg-red-50 text-red-800 text-sm border border-red-100/50 font-medium text-center flex items-center justify-center gap-2">
-              <Info className="w-4 h-4" /> {error}
+              {error && (
+                <div className="mt-4 p-4 rounded-2xl bg-red-500/15 text-red-300 text-xs border border-red-500/30 font-semibold text-center flex items-center justify-center gap-2">
+                  <Info className="w-4 h-4 shrink-0" /> {error}
+                </div>
+              )}
+
+              <div className="mt-4">
+                <button
+                  onClick={generateQuiz}
+                  disabled={loading || !file}
+                  className={cn(
+                    "w-full py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest transition-all duration-300 flex items-center justify-center gap-3",
+                    loading || !file
+                      ? "bg-white/5 text-slate-500 cursor-not-allowed border border-white/5"
+                      : "bg-gradient-to-r from-blue-600 to-sky-500 text-white hover:from-blue-500 hover:to-sky-400 shadow-xl shadow-blue-500/30 hover:scale-[1.01] active:scale-95"
+                  )}
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Tahlil qilinmoqda...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      Test Yaratishni Boshlash
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
-          )}
-
-          <div className="mt-4">
-            <button
-              onClick={generateQuiz}
-              disabled={loading || !file}
-              className={cn(
-                "w-full py-4 px-6 rounded-2xl font-bold text-base transition-all duration-300 flex items-center justify-center gap-3",
-                loading || !file
-                  ? "bg-slate-100 text-slate-400 cursor-not-allowed"
-                  : "bg-blue-600 text-white hover:bg-blue-700 shadow-xl shadow-blue-600/20 hover:-translate-y-1 active:translate-y-0"
-              )}
-            >
-              {loading ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  JARAYON BAJARILMOQDA...
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  TEST YARATISHNI BOSHLASH
-                </>
-              )}
-            </button>
           </div>
-        </div>
+        )}
       </div>
     );
   }
 
+  // 2. Qoidalar & Namuna oynasi
   if (view === 'guide') {
     return (
-      <div className="max-w-2xl mx-auto w-full pt-8 pb-20 px-4 md:px-0 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="max-w-2xl mx-auto w-full pt-6 pb-24 px-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
         <button 
           onClick={() => setView('menu')}
-          className="flex items-center gap-2 text-zinc-400 hover:text-zinc-900 mb-8 font-medium transition-colors group"
+          className="flex items-center gap-2 text-slate-400 hover:text-white mb-6 font-bold text-xs transition-colors bg-white/5 border border-white/10 px-4 py-2 rounded-full w-fit"
         >
-          <div className="p-2 border border-zinc-200 rounded-full group-hover:bg-zinc-100 transition-colors">
-             <ArrowLeft className="w-4 h-4" />
-          </div>
-          <span>Orqaga</span>
+          <ArrowLeft className="w-4 h-4" /> Orqaga
         </button>
 
-        <div className="mb-8">
-          <h1 className="text-3xl md:text-4xl font-[800] tracking-tight mb-3 text-zinc-900">
-            Fayl formati qoidalari
-          </h1>
-          <p className="text-zinc-500 text-sm leading-relaxed max-w-md">
-            Testlar muvaffaqiyatli import qilinishi uchun hujjatlaringiz quyidagi tartibda yozilgan bo‘lishi lozim.
+        <div className="mb-6">
+          <h1 className="text-3xl font-black text-white mb-2">HEMIS Test Standartlari</h1>
+          <p className="text-slate-400 text-xs sm:text-sm">
+            Quyidagi formatdagi fayllar <strong>0 AI xarajati bilan, mutlaqo tekinga</strong> testga aylanadi:
           </p>
         </div>
 
-        <div className="bg-white rounded-[2rem] p-6 sm:p-10 shadow-[0_4px_24px_rgba(0,0,0,0.02)] border border-zinc-200/60 text-zinc-800">
-           
-           <div className="space-y-8 text-sm leading-relaxed">
-             
-             <ul className="grid grid-cols-1 md:grid-cols-3 gap-4">
-               <li className="bg-zinc-50 rounded-2xl p-5 border border-zinc-100">
-                  <div className="w-8 h-8 rounded-full bg-white shadow-sm border border-zinc-200 flex items-center justify-center text-lg font-bold mb-3">1</div>
-                  <strong className="block text-zinc-900 mb-1">Savolni ajrating</strong>
-                  <span className="text-zinc-500">Har bir savol o'rtasini <code className="bg-zinc-200 px-1.5 py-0.5 rounded text-zinc-800 font-mono text-xs">++++</code> belgisi bilan bo'ling.</span>
-               </li>
-               <li className="bg-zinc-50 rounded-2xl p-5 border border-zinc-100">
-                  <div className="w-8 h-8 rounded-full bg-white shadow-sm border border-zinc-200 flex items-center justify-center text-lg font-bold mb-3">2</div>
-                  <strong className="block text-zinc-900 mb-1">Javoblarni ajrating</strong>
-                  <span className="text-zinc-500">Tugmalar uchun variantlarni <code className="bg-zinc-200 px-1.5 py-0.5 rounded text-zinc-800 font-mono text-xs">====</code> orqali ajrating.</span>
-               </li>
-               <li className="bg-zinc-50 rounded-2xl p-5 border border-zinc-100">
-                  <div className="w-8 h-8 rounded-full bg-green-100 shadow-sm border border-green-200 flex items-center justify-center text-green-700 font-bold mb-3">3</div>
-                  <strong className="block text-zinc-900 mb-1">To'g'ri javob</strong>
-                  <span className="text-zinc-500">To'g'ri variantning boshqiga <code className="bg-green-200 px-1.5 py-0.5 rounded text-green-800 font-mono text-xs">#</code> belgisini qo'ying.</span>
-               </li>
-             </ul>
-
-             <div>
-               <h3 className="font-bold mb-2 flex items-center gap-2"><FileText className="w-4 h-4 text-zinc-400" /> Hujjat ichidagi yozuv namunasi:</h3>
-               <div className="bg-slate-900 rounded-2xl p-6 text-slate-300 font-mono text-xs overflow-x-auto shadow-2xl relative">
-                 <div className="absolute top-0 left-0 w-full h-8 bg-white/5 border-b border-white/5 flex items-center px-4 gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full bg-red-500/80"></div>
-                    <div className="w-2.5 h-2.5 rounded-full bg-amber-500/80"></div>
-                    <div className="w-2.5 h-2.5 rounded-full bg-green-500/80"></div>
-                 </div>
-                 <pre className="mt-6 leading-[1.8]">
-<span className="text-indigo-400 font-bold">Asakada birinchi marta qachon avtomobil ishlab chiqarilgan?</span>
-<span className="text-zinc-500">====</span>
-1994-yil
-<span className="text-zinc-500">====</span>
-<span className="text-green-400">#1996-yil iyul</span>
-<span className="text-zinc-500">====</span>
-1998-yil
-<span className="text-zinc-500">++++</span>
-<span className="text-indigo-400 font-bold">Internetning asoschisi kim?</span>
-<span className="text-zinc-500">====</span>
-<span className="text-green-400">#Tim Berners-Lee</span>
-<span className="text-zinc-500">====</span>
-Bill Gates
-<span className="text-zinc-500">====</span>
-Steve Jobs
-                 </pre>
-               </div>
+        <div className="glass-card rounded-[2.5rem] p-6 sm:p-8 space-y-6">
+           <div>
+             <div className="flex items-center gap-2 mb-2">
+               <span className="w-6 h-6 rounded-full bg-blue-500 text-white text-xs font-black flex items-center justify-center">1</span>
+               <h3 className="font-bold text-white text-sm">Simvolli Format (++++ va ====)</h3>
              </div>
-
-             <button
-               onClick={() => setView('upload')}
-               className="w-full mt-4 py-4 px-6 rounded-2xl font-bold text-base bg-blue-600 text-white hover:bg-blue-700 shadow-xl shadow-blue-600/20 transition-all flex items-center justify-center gap-3 group"
-             >
-               FAYLNI YUKLASHGA O'TISH
-               <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-             </button>
+             <p className="text-xs text-slate-400 mb-3">Har bir savol <code>++++</code> bilan, variantlar <code>====</code> bilan ajratiladi. To'g'ri variant oldiga <code>#</code> qo'yiladi.</p>
+             <div className="bg-[#080c14] rounded-2xl p-4 text-slate-300 font-mono text-xs overflow-x-auto border border-white/5 shadow-inner">
+<pre>{`++++
+O'zbekiston Davlat bayrog'i qachon qabul qilingan?
+====
+1990-yil 31-avgust
+====
+#1991-yil 18-noyabr
+====
+1992-yil 8-dekabr
+====
+1993-yil 2-iyul`}</pre>
+             </div>
            </div>
+
+           <div>
+             <div className="flex items-center gap-2 mb-2">
+               <span className="w-6 h-6 rounded-full bg-emerald-500 text-white text-xs font-black flex items-center justify-center">2</span>
+               <h3 className="font-bold text-white text-sm">Raqamlangan Format (1. Savol... A) B) C) D))</h3>
+             </div>
+             <p className="text-xs text-slate-400 mb-3">Word faylda raqam va harflar bilan yozilgan odatiy testlar. To'g'ri javob <code>Javob: A</code> yoki <code>#A)</code> bilan belgilanadi.</p>
+             <div className="bg-[#080c14] rounded-2xl p-4 text-slate-300 font-mono text-xs overflow-x-auto border border-white/5 shadow-inner">
+<pre>{`1. Dasturlashda o'zgaruvchi nima?
+A) O'zgarmas kattalik
+#B) Xotiraning nomlangan sohasi
+C) Funksiya nomi
+D) Kompilyator buyrug'i
+Javob: B`}</pre>
+             </div>
+           </div>
+
+           <button
+             onClick={() => setView('upload')}
+             className="w-full py-4 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-blue-500/25 flex items-center justify-center gap-2 transition-all"
+           >
+             Faylni Yuklashga O'tish <ArrowRight className="w-4 h-4" />
+           </button>
         </div>
       </div>
     );
   }
 
-  // Menu View (Dashboard) Bento Layout
+  // 3. Asosiy Dashboard (Bento Grid)
   return (
-    <div className="max-w-4xl mx-auto w-full pt-6 md:pt-10 pb-20 px-4 md:px-6 animate-in fade-in zoom-in-[0.98] duration-500">
+    <div className="max-w-4xl mx-auto w-full pt-4 md:pt-8 pb-20 px-4 animate-in fade-in duration-500">
        
-       <header className="mb-8 md:mb-10">
-         <h1 className="text-3xl md:text-5xl font-extrabold tracking-tight text-zinc-900">Nima yaratamiz bugun?</h1>
-         <p className="text-zinc-500 mt-2 text-sm md:text-base font-medium">Bitta hujjat orqali katta imkoniyatlar dunyosini kashf qiling.</p>
+       {/* Gamified Welcome Header */}
+       <header className="mb-6 md:mb-8">
+         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-extrabold uppercase tracking-wider mb-3">
+           <Cpu className="w-3.5 h-3.5" /> HEMIS Avtomatik Modeli Faol
+         </div>
+         <h1 className="text-3xl md:text-5xl font-black tracking-tight text-white leading-tight">
+           Bugun qaysi testni <br className="hidden sm:inline" />
+           <span className="animated-gradient-text">zabt etamiz?</span>
+         </h1>
+         <p className="text-slate-400 mt-2 text-xs sm:text-sm font-medium">
+           HEMIS testlarini soniyada interaktiv testga aylantiring yoki kartochkalar bilan yodlang.
+         </p>
        </header>
        
-       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-5">
+       {/* Bento Grid */}
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
          
-         {/* Main Action - Upload (Bento Large) */}
+         {/* Katta Bento: Fayl yuklash (Hero Card) */}
          <button 
-           onClick={() => setView('upload')}
-           className="md:col-span-2 group relative overflow-hidden rounded-[2rem] bg-blue-600 p-8 md:p-10 text-left text-white shadow-[0_15px_30px_rgba(37,99,235,0.2)] transition-all duration-300 hover:scale-[1.01] active:scale-[0.99] flex flex-col justify-end min-h-[300px]"
+           onClick={() => {
+             setGeneratedQuizId(null);
+             setView('upload');
+           }}
+           className="md:col-span-2 group relative overflow-hidden rounded-[2.5rem] bg-gradient-to-br from-blue-600 via-indigo-600 to-sky-600 p-8 md:p-10 text-left text-white shadow-[0_25px_50px_-12px_rgba(37,99,235,0.4)] transition-all duration-300 hover:scale-[1.01] active:scale-[0.99] flex flex-col justify-end min-h-[300px] border border-white/20"
          >
-            <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-30 group-hover:-translate-y-2 group-hover:translate-x-2 transition-all duration-500">
-               <UploadCloud size={140} strokeWidth={1} />
+            {/* Background 3D icon */}
+            <div className="absolute top-0 right-0 p-6 opacity-15 group-hover:opacity-30 group-hover:-translate-y-2 group-hover:translate-x-2 transition-all duration-500 pointer-events-none">
+               <UploadCloud size={160} strokeWidth={1} />
             </div>
             
             <div className="relative z-10">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/20 rounded-full text-[10px] uppercase tracking-widest font-bold backdrop-blur-md mb-6 border border-white/20">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/20 rounded-full text-[10px] uppercase tracking-widest font-black backdrop-blur-md mb-4 border border-white/25">
                  <Sparkles className="w-3 h-3 text-white" />
-                 Eng ko'p ishlatilgan
+                 0 AI Sarfi • 100% Bepul
               </span>
-              <h2 className="text-3xl md:text-4xl font-extrabold mb-3 tracking-tight">Hujjatdan test tuzish</h2>
-              <p className="text-blue-100 max-w-sm font-medium text-sm leading-relaxed">
-                PDF yoki DOCX faylingizni yuklang. Sun'iy intellekt uni darhol interaktiv savol-javob oynasiga aylantiradi.
+              <h2 className="text-3xl md:text-4xl font-black mb-3 tracking-tight">Hujjatdan Test Tuzish</h2>
+              <p className="text-blue-100 max-w-md font-medium text-xs sm:text-sm leading-relaxed mb-6">
+                HEMIS formatidagi Word (.docx), PDF yoki TXT faylingizni yuklang. Tizim bir zumda tayyor test oynasini ochadi.
               </p>
+
+              <div className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-white text-slate-900 font-extrabold text-xs uppercase tracking-wider shadow-lg group-hover:shadow-white/20 transition-all">
+                <span>Fayl tanlash</span>
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </div>
             </div>
          </button>
 
-         {/* Format Guide (Bento Small Right) */}
+         {/* Kichik Bento: Format Qo'llanmasi */}
          <button 
            onClick={() => setView('guide')}
-           className="col-span-1 rounded-[2rem] bg-indigo-50 border border-indigo-100 p-8 text-left transition-all duration-300 hover:bg-indigo-100 hover:scale-[1.02] active:scale-[0.98] flex flex-col min-h-[200px] md:min-h-[300px]"
+           className="col-span-1 rounded-[2.5rem] glass-card-interactive p-8 text-left flex flex-col justify-between min-h-[220px] md:min-h-[300px] group border border-white/10"
          >
-            <div className="w-12 h-12 bg-indigo-500 text-white rounded-2xl flex items-center justify-center mb-auto shadow-lg shadow-indigo-500/20">
+            <div className="w-12 h-12 bg-sky-500/15 border border-sky-500/30 text-sky-400 rounded-2xl flex items-center justify-center shadow-lg shadow-sky-500/20 group-hover:scale-110 transition-transform">
               <BookOpen className="w-6 h-6" />
             </div>
             <div className="mt-8">
-              <h4 className="font-[800] text-xl tracking-tight text-indigo-950 mb-2">Qoidalar & Namuna</h4>
-              <p className="text-sm text-indigo-700/80 font-medium leading-relaxed">
-                Tizim savollaringizni to'g'ri o'qishi uchun qanday formatda matn yozish kerakligini bilib oling.
+              <span className="text-[10px] font-black uppercase tracking-widest text-sky-400 block mb-1">Standartlar</span>
+              <h4 className="font-extrabold text-xl text-white mb-2">HEMIS Formatlari</h4>
+              <p className="text-xs text-slate-400 leading-relaxed font-medium">
+                Testlaringiz to'g'ri o'qilishi uchun shablon va qoidalar bilan tanishing.
               </p>
             </div>
          </button>
 
-         {/* Features Coming Soon */}
-         <div className="col-span-1 border border-zinc-200 bg-white rounded-[2rem] p-6 text-left flex items-start gap-4 cursor-not-allowed opacity-60">
-            <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center shrink-0">
-               <Layers className="w-5 h-5 text-zinc-500" />
+         {/* 3. Yodlash Kartochkalari (Flashcards Arena) */}
+         <Link 
+           to="/history"
+           className="col-span-1 rounded-[2rem] glass-card-interactive p-6 text-left flex items-start gap-4 group border border-emerald-500/20 hover:border-emerald-500/40"
+         >
+            <div className="w-12 h-12 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-emerald-500/20 group-hover:scale-110 transition-transform">
+               <Layers className="w-6 h-6" />
             </div>
             <div>
-               <h4 className="font-bold text-zinc-900 mb-1 leading-tight">Yodlash kartochkalari</h4>
-               <p className="text-xs text-zinc-500 font-medium">Tez orada qo'shiladi</p>
+               <h4 className="font-extrabold text-white text-sm mb-1">Yodlash Kartochkalari</h4>
+               <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                 Savollarni 3D flip-kartochkalar orqali tez yodlang.
+               </p>
             </div>
-         </div>
+         </Link>
 
-         <div className="col-span-1 border border-zinc-200 bg-white rounded-[2rem] p-6 text-left flex items-start gap-4 cursor-not-allowed opacity-60">
-            <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center shrink-0">
-               <Presentation className="w-5 h-5 text-zinc-500" />
+         {/* 4. Imtihon Tarixi va Baza */}
+         <Link 
+           to="/history"
+           className="col-span-1 rounded-[2rem] glass-card-interactive p-6 text-left flex items-start gap-4 group border border-purple-500/20 hover:border-purple-500/40"
+         >
+            <div className="w-12 h-12 bg-purple-500/15 border border-purple-500/30 text-purple-400 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-purple-500/20 group-hover:scale-110 transition-transform">
+               <Award className="w-6 h-6" />
             </div>
             <div>
-               <h4 className="font-bold text-zinc-900 mb-1 leading-tight">Slaydlarga o'girish</h4>
-               <p className="text-xs text-zinc-500 font-medium">Tez orada qo'shiladi</p>
+               <h4 className="font-extrabold text-white text-sm mb-1">Mening Testlarim</h4>
+               <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                 O'tgan imtihonlar ballari va saqlangan testlar.
+               </p>
             </div>
-         </div>
+         </Link>
 
-         <div className="col-span-1 border border-zinc-200 bg-white rounded-[2rem] p-6 text-left flex items-start gap-4 cursor-not-allowed opacity-60">
-            <div className="w-10 h-10 bg-zinc-100 rounded-xl flex items-center justify-center shrink-0">
-               <MessageSquare className="w-5 h-5 text-zinc-500" />
+         {/* 5. Telegram Bot Integratsiyasi */}
+         <a 
+           href="https://t.me/quizgenrobot" 
+           target="_blank" 
+           rel="noreferrer"
+           className="col-span-1 rounded-[2rem] glass-card-interactive p-6 text-left flex items-start gap-4 group border border-blue-500/20 hover:border-blue-500/40"
+         >
+            <div className="w-12 h-12 bg-blue-500/15 border border-blue-500/30 text-blue-400 rounded-2xl flex items-center justify-center shrink-0 shadow-lg shadow-blue-500/20 group-hover:scale-110 transition-transform">
+               <Send className="w-6 h-6" />
             </div>
             <div>
-               <h4 className="font-bold text-zinc-900 mb-1 leading-tight">Mavzudan test (AI)</h4>
-               <p className="text-xs text-zinc-500 font-medium">Tez orada qo'shiladi</p>
+               <h4 className="font-extrabold text-white text-sm mb-1">Telegram Bot</h4>
+               <p className="text-xs text-slate-400 font-medium leading-relaxed">
+                 @quizgenrobot ga fayl yuborib bir zumda test oching.
+               </p>
             </div>
-         </div>
+         </a>
 
        </div>
     </div>
