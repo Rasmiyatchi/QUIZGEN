@@ -26,6 +26,7 @@ import {
 } from './payments/manual.ts';
 import { generateClickPaymentUrl } from './payments/click.ts';
 import { generatePaymePaymentUrl } from './payments/payme.ts';
+import { QuizCreationService } from './quiz-creation.service.ts';
 
 let botPollingActive = false;
 let botOffset = 0;
@@ -582,75 +583,99 @@ async function handleBotMessage(botToken: string, appUrl: string, msg: any) {
     }
   }
 
-  // 5. Foydalanuvchi hujjat (fayl) yuborganida
+  // 5. Foydalanuvchi hujjat (fayl) yuborganida — M4: Yagona QuizCreationService
   if (msg.document) {
     const doc = msg.document;
     const fileName = doc.file_name || 'hujjat';
-    const isDocx = fileName.endsWith('.docx');
-    const isTxt = fileName.endsWith('.txt');
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
 
-    if (!isDocx && !isTxt) {
+    if (!['docx', 'pdf', 'txt'].includes(ext)) {
       return sendTelegramMessage(
         botToken,
         chatId,
-        `⚠️ Kechirasiz, faqat Word (<b>.docx</b>) yoki Matn (<b>.txt</b>) formatidagi test fayllarini qabul qila olaman.`
+        `⚠️ Kechirasiz, faqat Word (<b>.docx</b>), PDF (<b>.pdf</b>) yoki Matn (<b>.txt</b>) formatidagi test fayllarini qabul qila olaman.`
       );
     }
 
-    await sendTelegramMessage(botToken, chatId, `⏳ <i>"${fileName}"</i> fayli qabul qilindi, tahlil qilinmoqda...`);
+    await sendTelegramMessage(botToken, chatId, `⏳ <i>"${escapeHtml(fileName)}"</i> fayli qabul qilindi, tahlil qilinmoqda...`);
 
     const fileBuf = await downloadTelegramFile(botToken, doc.file_id);
     if (!fileBuf) {
       return sendTelegramMessage(botToken, chatId, `❌ Faylni yuklab olishda xatolik yuz berdi.`);
     }
 
-    let extractedText = '';
-    if (isDocx) {
-      const data = await mammoth.extractRawText({ buffer: fileBuf });
-      extractedText = data.value || '';
-    } else {
-      extractedText = fileBuf.toString('utf8');
+    try {
+      const result = await QuizCreationService.createFromFile({
+        buffer: fileBuf,
+        fileName,
+        userId: String(user?.id || chatId)
+      });
+
+      if (result.success && result.quiz) {
+        const quiz = result.quiz;
+        const report = result.report;
+        const quizUrl = `${appUrl}/quiz/${quiz.id}`;
+        const editorUrl = `${appUrl}/editor/${quiz.id}`;
+        const flashcardUrl = `${appUrl}/flashcards/${quiz.id}`;
+
+        let reply = `✅ <b>HEMIS Test Muvaffaqiyatli Tayyorlandi!</b> 🎯\n\n` +
+          `📖 <b>Mavzu:</b> ${escapeHtml(quiz.title)}\n` +
+          `❓ <b>Savollar soni:</b> ${quiz.total_questions} ta\n` +
+          `⏱ <b>Tavsiya etilgan vaqt:</b> ${quiz.time_limit_minutes} daqiqa\n` +
+          `⚙️ <b>Tahlil turi:</b> ${report.formatType?.toUpperCase() || 'HEMIS'} (0 AI sarfi, 100% aniq)\n`;
+
+        if (report.needsReviewCount > 0) {
+          reply += `\n⚠️ <i>Eslatma: ${report.needsReviewCount} ta savolda to'g'ri javob belgisi noaniq bo'lgani sababli birinchi variant olindi.</i>\n`;
+        }
+
+        reply += `\nQuyidagi tugmalar orqali darhol testni yechishni boshlang: 👇`;
+
+        return sendTelegramMessage(botToken, chatId, reply, {
+          inline_keyboard: [
+            [
+              { text: "▶️ Testni Yechish", web_app: { url: quizUrl } }
+            ],
+            [
+              { text: "🃏 3D Flashcardlar", web_app: { url: flashcardUrl } },
+              { text: "✏️ Muharrir", web_app: { url: editorUrl } }
+            ],
+            [
+              { text: "💎 Premium Tariflar", callback_data: "view_plans" },
+              { text: "👤 Profilim", callback_data: "view_status" }
+            ]
+          ]
+        });
+      } else {
+        return sendTelegramMessage(
+          botToken,
+          chatId,
+          `⚠️ ${result.message || "Hujjatda HEMIS test shabloni topilmadi."}\n\n` +
+          `Iltimos, fayl <code>++++</code> va <code>====</code> yoki <code>1. Savol... A) B) C)</code> formatida ekanligiga ishonch hosil qiling.`
+        );
+      }
+    } catch (createErr: any) {
+      return sendTelegramMessage(botToken, chatId, `❌ Faylni tahlil qilishda xatolik: ${escapeHtml(createErr.message)}`);
     }
+  }
 
-    const hemisResult = parseHemisQuiz(extractedText);
+  // 5.1. Foydalanuvchi matn orqali HEMIS test yuborgan bo'lsa
+  if (rawText && (rawText.includes('++++') || (/(?:^\s*\d+[\.\)]|^\s*\d+\-savol)/m.test(rawText) && /^[#*+]?[A-DА-Д][\.\)]\s+/m.test(rawText)))) {
+    const textResult = QuizCreationService.createFromText({
+      text: rawText,
+      userId: String(user?.id || chatId),
+      title: "Telegram Matn Testi"
+    });
 
-    if (hemisResult.isHemis && hemisResult.questions.length > 0) {
-      // S7 — UUID ishlatamiz (Math.random emas)
-      const quizId = generateId();
-      const safeTitle = escapeHtml(fileName.replace(/\.[^/.]+$/, ""));
-      const newQuiz = createQuiz({
-        id: quizId,
-        user_id: String(user?.id || chatId),
-        title: safeTitle,
-        source_type: 'hemis',
-        total_questions: hemisResult.questions.length,
-        time_limit_minutes: 0,
-        is_public: 1
-      }, hemisResult.questions);
-
-      const reply = `✅ <b>HEMIS Test Muvaffaqiyatli Tayyorlandi!</b>\n\n` +
-        `📖 <b>Mavzu:</b> ${newQuiz.title}\n` +
-        `❓ <b>Savollar soni:</b> ${hemisResult.questions.length} ta\n` +
-        `⚙️ <b>Tahlil turi:</b> HEMIS shabloni (0 AI sarfi, 100% aniq)\n\n` +
-        `Test tizimda saqlandi. Saytga kiring va testni ishlang!`;
-
+    if (textResult.success && textResult.quiz) {
+      const quiz = textResult.quiz;
+      const quizUrl = `${appUrl}/quiz/${quiz.id}`;
+      const reply = `✅ <b>Matndan ${quiz.total_questions} ta savolli test yaratildi!</b> 🎯\n\n` +
+        `Quyidagi tugma orqali darhol boshlashingiz mumkin:`;
       return sendTelegramMessage(botToken, chatId, reply, {
         inline_keyboard: [
-          [
-            { text: "💎 Premium Tariflar", callback_data: "view_plans" }
-          ],
-          [
-            { text: "👤 Shaxsiy hisob", callback_data: "view_status" }
-          ]
+          [{ text: "▶️ Testni Yechish (TMA)", web_app: { url: quizUrl } }]
         ]
       });
-    } else {
-      return sendTelegramMessage(
-        botToken,
-        chatId,
-        `⚠️ Hujjatda HEMIS test shabloni topilmadi.\n` +
-        `Iltimos, fayl <code>++++</code> va <code>====</code> yoki <code>1. Savol... A) B) C)</code> formatida ekanligiga ishonch hosil qiling.`
-      );
     }
   }
 

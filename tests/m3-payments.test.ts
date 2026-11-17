@@ -364,3 +364,4 @@ describe('M3 — To\'lov Tizimlari Testlari (Click, Payme, Manual)', () => {
   });
 
 });
+

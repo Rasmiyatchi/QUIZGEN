@@ -397,3 +397,4 @@ export function generatePaymePaymentUrl(options: {
   const encoded = Buffer.from(paramStr).toString('base64');
   return `https://checkout.paycom.uz/${encoded}`;
 }
+

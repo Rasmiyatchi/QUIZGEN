@@ -105,6 +105,7 @@ import {
   handleRejectManualPayment 
 } from './src/services/payments/manual.ts';
 import { submitOrderProof } from './src/lib/db.ts';
+import { QuizCreationService } from './src/services/quiz-creation.service.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -945,6 +946,89 @@ correctAnswer - bu to'g'ri javobning options massividagi 0 dan boshlanuvchi inde
     }
   });
 
+  // 4.1. Fayldan test yaratish (HEMIS & Docx parser) — M4
+  app.post('/api/quizzes/from-file', requireAuth, upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "Fayl yuklanmadi." });
+      const result = await QuizCreationService.createFromFile({
+        buffer: req.file.buffer,
+        fileName: req.file.originalname,
+        mimeType: req.file.mimetype,
+        userId: req.user!.uid,
+        title: req.body?.title,
+        timeLimitMinutes: req.body?.timeLimitMinutes ? parseInt(req.body.timeLimitMinutes) : undefined
+      });
+      if (!result.success) {
+        return res.status(400).json({ error: result.message, report: result.report });
+      }
+      res.json({ success: true, quiz: result.quiz, report: result.report });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4.2. Matndan test yaratish
+  app.post('/api/quizzes/from-text', requireAuth, (req, res) => {
+    try {
+      const { text, title, timeLimitMinutes } = req.body;
+      if (!text || !text.trim()) return res.status(400).json({ error: "Matn kiritilmadi." });
+      const result = QuizCreationService.createFromText({
+        text,
+        userId: req.user!.uid,
+        title,
+        timeLimitMinutes: timeLimitMinutes ? parseInt(timeLimitMinutes) : undefined
+      });
+      if (!result.success) {
+        return res.status(400).json({ error: result.message, report: result.report });
+      }
+      res.json({ success: true, quiz: result.quiz, report: result.report });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4.3. AI orqali test yaratish
+  app.post('/api/quizzes/from-ai', requireAuth, aiLimiter, async (req, res) => {
+    try {
+      const { prompt, count, difficulty, subject } = req.body;
+      if (!prompt || !prompt.trim()) return res.status(400).json({ error: "Mavzu yoki matn kiritilmadi." });
+      const result = await QuizCreationService.createFromAi({
+        prompt,
+        userId: req.user!.uid,
+        count: count ? parseInt(count) : 10,
+        difficulty,
+        subject
+      });
+      if (!result.success) {
+        return res.status(400).json({ error: result.message });
+      }
+      res.json({ success: true, quiz: result.quiz, remainingQuota: result.remainingQuota });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4.4. Qo'lda savolma-savol test yaratish
+  app.post('/api/quizzes/manual', requireAuth, (req, res) => {
+    try {
+      const { title, subject, timeLimitMinutes, questions } = req.body;
+      if (!title) return res.status(400).json({ error: "Test nomi kiritilmadi." });
+      if (!Array.isArray(questions) || questions.length === 0) {
+        return res.status(400).json({ error: "Kamida bitta savol kiritilishi kerak." });
+      }
+      const result = QuizCreationService.createManual({
+        userId: req.user!.uid,
+        title,
+        subject,
+        timeLimitMinutes: timeLimitMinutes ? parseInt(timeLimitMinutes) : undefined,
+        questions
+      });
+      res.json({ success: true, quiz: result.quiz });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ===================================================
   // 5. TESTLAR BOSHQARUVI (CRUD)
   // ===================================================
@@ -1407,3 +1491,4 @@ function getQuizWithAnswers(quizId: string) {
 }
 
 startServer();
+

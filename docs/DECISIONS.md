@@ -41,3 +41,4 @@ Ushbu hujjat TZ talablariga muvofiq qabul qilingan barcha texnik va xavfsizlik q
   - Fayl yuklashda magic bytes tekshiruvi (.docx: PK\x03\x04, .pdf: %PDF, .txt: UTF-8).
   - Telegram bot xabarlarida `escapeHtml` majburiy qilindi.
   - Production static: faqat `dist/` papkasi ko'rsatiladi, `.env` va `data/` ochiq bo'lmaydi.
+

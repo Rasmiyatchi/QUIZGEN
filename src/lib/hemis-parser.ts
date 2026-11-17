@@ -1,23 +1,43 @@
 /**
- * Universal HEMIS Test Parser
- * O'zbekiston OTMlaridagi HEMIS va boshqa test tizimlari uchun shablonlarni avtomatik tahlil qiladi.
+ * Universal HEMIS Test Parser v3
+ * O'zbekiston OTMlaridagi HEMIS va boshqa test tizimlari uchun kengaytirilgan parser.
  * 0 AI token sarflaydi, 100% bepul, tezkor va aniq.
+ * 
+ * Qo'llab-quvvatlanadigan formatlar:
+ * 1. Simvolli format: ++++ (savol) ==== (variantlar) # yoki * yoki (+) to'g'ri javob
+ * 2. Raqamlangan format: 1. Savol... A) ... B) ... C) ... D) ... Javob: A
+ * 3. Kirill va Lotin harflari (A-F, А-Е)
+ * 4. HTML format (mammoth DOCX bold/strong teglari bilan)
+ * 5. ParseReport (to'liq hisobot, validQuestions, needsReview, warnings)
  */
 
 export interface HemisQuestion {
   question: string;
   options: string[];
   correctAnswer: number;
+  explanation?: string;
+  needsReview?: boolean;
+  reviewReason?: string;
+}
+
+export interface ParseReport {
+  isHemis: boolean;
+  formatType?: 'symbol' | 'numbered' | 'lettered' | 'html';
+  totalFound: number;
+  validQuestions: number;
+  needsReviewCount: number;
+  warnings: string[];
+  questions: HemisQuestion[];
 }
 
 export interface ParseResult {
   isHemis: boolean;
-  formatType?: 'symbol' | 'numbered' | 'lettered';
+  formatType?: 'symbol' | 'numbered' | 'lettered' | 'html';
   questions: HemisQuestion[];
 }
 
 /**
- * Matn ichidagi qatorlarni tozalash
+ * Matn ichidagi qatorlarni tozalash va normalizatsiya qilish
  */
 function cleanText(text: string): string {
   return text
@@ -28,17 +48,60 @@ function cleanText(text: string): string {
 }
 
 /**
+ * Variant harfini indeksga o'girish (A -> 0, B -> 1, C -> 2, D -> 3 va kirillcha)
+ */
+export function letterToIndex(letter: string): number {
+  const map: Record<string, number> = {
+    'a': 0, 'b': 1, 'c': 2, 'd': 3, 'e': 4, 'f': 5,
+    'а': 0, 'б': 1, 'в': 2, 'г': 3, 'д': 4, 'е': 5 // Kirill harflari
+  };
+  return map[letter.toLowerCase()] ?? 0;
+}
+
+/**
+ * HTML dan qalin (bold/strong) qilib belgilangan to'g'ri javoblarni oddiy matnga aylantirish
+ */
+export function preprocessHtmlDocx(html: string): string {
+  // Strong/bold teg ichida variant harfi (A) B) ko'rinishida) bo'lsa,
+  // `*` ni harfdan OLDIN qo'yamiz: "B) *text" emas, "*B) text" bo'lsin
+  const processed = html
+    // Agar strong teg variant harfini o'z ichiga olsa: <strong>B) text</strong> → *B) text
+    .replace(/<(?:strong|b)>\s*([A-FА-Еa-fа-е][\.\)]\s*.*?)<\/(?:strong|b)>/gi, '*$1')
+    // U teg (underline) bilan belgilangan variantlar ham xuddi shunday
+    .replace(/<u>\s*([A-FА-Еa-fа-е][\.\)]\s*.*?)<\/u>/gi, '*$1')
+    // Qolgan strong/b/u teglarni ham belgilaymiz (matnning o'rtasida bo'lsa)
+    .replace(/<(?:strong|b)>(.*?)<\/(?:strong|b)>/gi, '*$1')
+    .replace(/<u>(.*?)<\/u>/gi, '*$1')
+    // P va br teglarni qator ajratuvchiga
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<p[^>]*>/gi, '')
+    // Boshqa barcha HTML teglarni olib tashlash
+    .replace(/<[^>]+>/g, '')
+    .trim();
+  
+  // Agar variant qatori "X) *text" ko'rinishida bo'lsa,
+  // uni "*X) text" ga o'tkazamiz (numbered parser uchun)
+  return processed.replace(
+    /^([A-FА-Еa-fа-е][\.\)])\s+\*(.+)$/gm,
+    '*$1 $2'
+  );
+}
+
+/**
  * 1-SHABLON: Simvolli format (++++ va ====)
  */
-function parseSymbolFormat(text: string): HemisQuestion[] {
+function parseSymbolFormatWithReport(text: string): { questions: HemisQuestion[]; warnings: string[] } {
   const blocks = text
     .split(/\+{4,}/)
     .map(b => b.trim())
     .filter(b => b.length > 0);
 
   const questions: HemisQuestion[] = [];
+  const warnings: string[] = [];
 
-  for (const block of blocks) {
+  for (let bIdx = 0; bIdx < blocks.length; bIdx++) {
+    const block = blocks[bIdx];
     const parts = block
       .split(/={4,}/)
       .map(p => p.trim())
@@ -47,7 +110,7 @@ function parseSymbolFormat(text: string): HemisQuestion[] {
     if (parts.length >= 2) {
       const questionText = parts[0];
       const rawOptions = parts.slice(1);
-      let correctAnswerIndex = 0;
+      let correctAnswerIndex = -1;
       const options: string[] = [];
 
       for (let i = 0; i < rawOptions.length; i++) {
@@ -62,42 +125,44 @@ function parseSymbolFormat(text: string): HemisQuestion[] {
         options.push(opt);
       }
 
-      if (options.length >= 2 && questionText) {
-        questions.push({
-          question: questionText,
-          options,
-          correctAnswer: correctAnswerIndex
-        });
+      if (options.length < 2) {
+        warnings.push(`${bIdx + 1}-savolda variantlar yetarli emas (kamida 2 ta bo'lishi kerak).`);
+        continue;
       }
+
+      const needsReview = correctAnswerIndex === -1;
+      if (needsReview) {
+        correctAnswerIndex = 0; // Standart birinchi variant
+        warnings.push(`${bIdx + 1}-savolda to'g'ri javob belgilanmagan (# yoki * yo'q), 1-variant belgilandi.`);
+      }
+
+      questions.push({
+        question: questionText,
+        options,
+        correctAnswer: correctAnswerIndex,
+        needsReview,
+        reviewReason: needsReview ? "To'g'ri javob belgilanmagan" : undefined
+      });
+    } else if (parts.length === 1 && parts[0].length > 5) {
+      warnings.push(`${bIdx + 1}-savol ajratuvchi (====) bilan to'liq ajratilmagan.`);
     }
   }
 
-  return questions;
-}
-
-/**
- * Variant harfini indeksga o'girish (A -> 0, B -> 1, C -> 2, D -> 3 va kirillcha)
- */
-function letterToIndex(letter: string): number {
-  const map: Record<string, number> = {
-    'a': 0, 'b': 1, 'c': 2, 'd': 3, 'e': 4, 'f': 5,
-    'а': 0, 'б': 1, 'в': 2, 'г': 3, 'д': 4, 'е': 5 // Kirill harflari
-  };
-  return map[letter.toLowerCase()] ?? 0;
+  return { questions, warnings };
 }
 
 /**
  * 2-SHABLON: Raqamlangan format (1. Savol... A) ... B) ... C) ... D) ... Javob: A)
  */
-function parseNumberedFormat(text: string): HemisQuestion[] {
+function parseNumberedFormatWithReport(text: string): { questions: HemisQuestion[]; warnings: string[] } {
   const questions: HemisQuestion[] = [];
+  const warnings: string[] = [];
 
-  // Har bir savol qatorini ajratib olish (1. yoki 1) yoki 1-savol yoki === orqali)
-  // Masalan: \n1. yoki \n1) yoki matn boshidagi 1.
+  // Savollar bloklarini ajratish
   const questionBlocks = text.split(/\n(?=(?:\d+[\.\)]|\d+\-savol[\.\:]?|\bSavol\s+\d+[\.\:]?)\s+)/i);
 
-  for (const block of questionBlocks) {
-    const trimmed = block.trim();
+  for (let qIdx = 0; qIdx < questionBlocks.length; qIdx++) {
+    const trimmed = questionBlocks[qIdx].trim();
     if (!trimmed) continue;
 
     const lines = trimmed.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -108,7 +173,7 @@ function parseNumberedFormat(text: string): HemisQuestion[] {
 
     // Agar savol bir necha qator davom etsa, variantlar boshlanguncha qo'shamiz
     let lineIdx = 1;
-    while (lineIdx < lines.length && !/^[#*]?[A-DА-Дa-dа-д][\.\)]\s+/i.test(lines[lineIdx])) {
+    while (lineIdx < lines.length && !/^[#*+]?[A-FА-Еa-fа-е][\.\)]\s+/i.test(lines[lineIdx])) {
       questionText += ' ' + lines[lineIdx];
       lineIdx++;
     }
@@ -119,15 +184,15 @@ function parseNumberedFormat(text: string): HemisQuestion[] {
     for (; lineIdx < lines.length; lineIdx++) {
       const line = lines[lineIdx];
 
-      // To'g'ri javob alohida qatorda ko'rsatilganmi? (Masalan: "Javob: A" yoki "To'g'ri javob: B" yoki "Ans: C")
-      const answerMatch = line.match(/(?:to['`‘]?g['`‘]?ri\s+javob|javob|ans(?:wer)?)\s*[:=\-]?\s*([A-DА-Д])/i);
+      // To'g'ri javob alohida qatorda ko'rsatilganmi?
+      const answerMatch = line.match(/(?:to['`‘]?g['`‘]?ri\s+javob|javob|ans(?:wer)?)\s*[:=\-]?\s*([A-FА-Е])/i);
       if (answerMatch) {
         detectedAnswerIndex = letterToIndex(answerMatch[1]);
         continue;
       }
 
       // Variant qatori bormi? (A) ... yoki #A) ... yoki *A) ...)
-      const optMatch = line.match(/^([#*+])?\s*([A-DА-Дa-dа-д])[\.\)]\s+(.*)$/i);
+      const optMatch = line.match(/^([#*+])?\s*([A-FА-Еa-fа-е])[\.\)]\s+(.*)$/i);
       if (optMatch) {
         const isMarkedCorrect = Boolean(optMatch[1]);
         let optText = optMatch[3].trim();
@@ -145,51 +210,107 @@ function parseNumberedFormat(text: string): HemisQuestion[] {
       }
     }
 
-    if (options.length >= 2 && questionText) {
-      questions.push({
-        question: questionText,
-        options,
-        correctAnswer: detectedAnswerIndex >= 0 && detectedAnswerIndex < options.length ? detectedAnswerIndex : 0
-      });
+    if (options.length < 2) {
+      warnings.push(`Savolda variantlar topilmadi yoki yetarli emas: "${questionText.substring(0, 40)}..."`);
+      continue;
     }
+
+    const needsReview = detectedAnswerIndex < 0 || detectedAnswerIndex >= options.length;
+    if (needsReview) {
+      detectedAnswerIndex = 0;
+      warnings.push(`"${questionText.substring(0, 30)}..." savolida to'g'ri javob belgilanmagan, 1-variant olindi.`);
+    }
+
+    questions.push({
+      question: questionText,
+      options,
+      correctAnswer: detectedAnswerIndex,
+      needsReview,
+      reviewReason: needsReview ? "To'g'ri javob noaniq" : undefined
+    });
   }
 
-  return questions;
+  return { questions, warnings };
 }
 
 /**
- * Asosiy tahlil funksiyasi (Avtomatik formatni aniqlash)
+ * Kengaytirilgan tahlil funksiyasi (ParseReport bilan)
  */
-export function parseHemisQuiz(rawText: string): ParseResult {
+export function parseHemisQuizWithReport(rawText: string): ParseReport {
   const cleaned = cleanText(rawText);
 
-  // 1. Simvolli formatni tekshirish
+  // 1. Simvolli formatni tekshirish (++++ va ====)
   if (cleaned.includes('++++') && cleaned.includes('====')) {
-    const questions = parseSymbolFormat(cleaned);
+    const { questions, warnings } = parseSymbolFormatWithReport(cleaned);
     if (questions.length > 0) {
-      return { isHemis: true, formatType: 'symbol', questions };
+      const needsReviewCount = questions.filter(q => q.needsReview).length;
+      return {
+        isHemis: true,
+        formatType: 'symbol',
+        totalFound: questions.length,
+        validQuestions: questions.length - needsReviewCount,
+        needsReviewCount,
+        warnings,
+        questions
+      };
     }
   }
 
   // 2. Raqamlangan formatni tekshirish (1. Savol... A) ... B) ...)
   const hasNumbers = /(?:^\s*\d+[\.\)]|^\s*\d+\-savol)/m.test(cleaned);
-  const hasOptions = /^[#*]?[A-DА-Д][\.\)]\s+/m.test(cleaned);
+  const hasOptions = /^[#*+]?[A-FА-Е][\.\)]\s+/m.test(cleaned);
 
   if (hasNumbers && hasOptions) {
-    const questions = parseNumberedFormat(cleaned);
+    const { questions, warnings } = parseNumberedFormatWithReport(cleaned);
     if (questions.length > 0) {
-      return { isHemis: true, formatType: 'numbered', questions };
+      const needsReviewCount = questions.filter(q => q.needsReview).length;
+      return {
+        isHemis: true,
+        formatType: 'numbered',
+        totalFound: questions.length,
+        validQuestions: questions.length - needsReviewCount,
+        needsReviewCount,
+        warnings,
+        questions
+      };
     }
   }
 
-  // 3. Agar raqamlar bo'lmasa-da, har bir savol A) B) C) D) ko'rinishida bo'lsa
+  // 3. Raqamsiz, faqat A) B) C) variantli format
   if (hasOptions) {
-    const questions = parseNumberedFormat(cleaned);
+    const { questions, warnings } = parseNumberedFormatWithReport(cleaned);
     if (questions.length > 0) {
-      return { isHemis: true, formatType: 'lettered', questions };
+      const needsReviewCount = questions.filter(q => q.needsReview).length;
+      return {
+        isHemis: true,
+        formatType: 'lettered',
+        totalFound: questions.length,
+        validQuestions: questions.length - needsReviewCount,
+        needsReviewCount,
+        warnings,
+        questions
+      };
     }
   }
 
-  return { isHemis: false, questions: [] };
+  return {
+    isHemis: false,
+    totalFound: 0,
+    validQuestions: 0,
+    needsReviewCount: 0,
+    warnings: ["HEMIS shabloni topilmadi. ++++ / ==== yoki 1. A) B) C) formatida bo'lishi kerak."],
+    questions: []
+  };
 }
 
+/**
+ * Mavjud kodlar bilan to'liq orqaga moslik (Backward Compatibility)
+ */
+export function parseHemisQuiz(rawText: string): ParseResult {
+  const report = parseHemisQuizWithReport(rawText);
+  return {
+    isHemis: report.isHemis,
+    formatType: report.formatType,
+    questions: report.questions
+  };
+}

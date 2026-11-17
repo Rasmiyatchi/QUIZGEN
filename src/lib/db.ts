@@ -488,6 +488,24 @@ export function getQuiz(id: string): QuizRecord | null {
   };
 }
 
+// Testdagi savollarni alohida olish (quiz bilan birgalikda emas)
+export function getQuizQuestions(quizId: string): QuestionRecord[] {
+  if (useJsonFallback || !dbInstance) {
+    return memoryStore.questions[quizId] || [];
+  }
+
+  const rows = dbInstance.prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY order_num ASC').all(quizId) as any[];
+  return rows.map(r => ({
+    id: r.id,
+    quiz_id: r.quiz_id,
+    question: r.question_text,
+    options: typeof r.options === 'string' ? JSON.parse(r.options) : r.options,
+    correctAnswer: r.correct_answer,
+    explanation: r.explanation,
+    order_num: r.order_num
+  }));
+}
+
 export function getUserQuizzes(userId: string): QuizRecord[] {
   if (useJsonFallback || !dbInstance) {
     return Object.values(memoryStore.quizzes)

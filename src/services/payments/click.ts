@@ -301,3 +301,4 @@ export function generateClickPaymentUrl(options: {
   }
   return url.toString();
 }
+
