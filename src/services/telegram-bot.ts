@@ -14,6 +14,7 @@ import {
   getUserSubscription 
 } from '../lib/db.ts';
 import { escapeHtml, generateId } from '../lib/security.ts';
+import { getEffectiveEntitlements } from '../lib/entitlements.ts';
 
 let botPollingActive = false;
 let botOffset = 0;
@@ -289,18 +290,19 @@ function sendPricingMenu(botToken: string, chatId: number | string, appUrl: stri
 }
 
 function sendStatusMenu(botToken: string, chatId: number | string, user: any, appUrl: string) {
-  const sub = getUserSubscription(String(user?.id || chatId));
-  const planName = sub.plan === 'master' ? '🥇 Grand Master' : sub.plan === 'pro' ? '🥈 Sessiya Pro' : sub.plan === 'start' ? '🥉 Talaba Start' : 'Oddiy (Bepul)';
-  // S12 — first_name HTML escape qilinadi
+  const effective = getEffectiveEntitlements(String(user?.id || chatId));
+  const planName = effective.plan === 'master' ? '🥇 Grand Master' : effective.plan === 'pro' ? '🥈 Sessiya Pro' : effective.plan === 'start' ? '🥉 Talaba Start' : 'Oddiy (Bepul)';
   const safeFirstName = escapeHtml(user?.first_name || 'Foydalanuvchi');
 
   const statusText = `👤 <b>Sizning profilingiz:</b>\n\n` +
     `Ism: <b>${safeFirstName}</b>\n` +
     `Telegram ID: <code>${user?.id || chatId}</code>\n` +
     `Tarif: <b>${planName}</b>\n` +
-    `Holati: <b>${sub.is_active ? '✅ Faol' : 'Oddiy rejim'}</b>\n` +
-    (sub.is_active ? `Qolgan vaqt: <b>${sub.days_left} kun</b>\n` : '') +
-    `Bugungi AI testlar: <b>${sub.ai_tests_today} / ${sub.daily_ai_limit === 99999 ? 'Cheksiz' : sub.daily_ai_limit} ta</b>\n` +
+    `Holati: <b>${effective.is_active ? '✅ Faol' : 'Oddiy rejim'}</b>\n` +
+    (effective.is_active ? `Qolgan vaqt: <b>${effective.days_left} kun</b>\n` : '') +
+    `Bugungi AI testlar: <b>${effective.ai_today} / ${effective.entitlements.ai_daily_limit === 99999 || effective.entitlements.ai_daily_limit === 300 ? 'Cheksiz' : effective.entitlements.ai_daily_limit} ta</b>\n` +
+    `Test Muharriri (Editor): <b>${effective.entitlements.editor ? '✅ Ochiq' : '🔒 Pro tarifda'}</b>\n` +
+    `3D Flashcardlar: <b>${effective.entitlements.flashcards ? '✅ Ochiq' : '🔒 Pro tarifda'}</b>\n` +
     `HEMIS test yuklash: <b>Cheksiz (100% bepul)</b>\n\n` +
     `Tarifni oshirish yoki faollashtirish uchun pastdagi tugmani bosing:`;
 

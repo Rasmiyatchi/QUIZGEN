@@ -5,8 +5,8 @@
 | Bosqich | Tavsif | Holat | Git Branch |
 | :--- | :--- | :--- | :--- |
 | **M0** | **Xavfsizlik va Poydevor (S1–S14)** | **Yakunlandi** | `v3/m0-security` |
-| **M1** | Obuna Yadrosi & PostgreSQL Migratsiya | Navbatda | `v3/m1-billing` |
-| **M2** | Admin Panel v1 | Kutilmoqda | `v3/m2-admin` |
+| **M1** | **Obuna Yadrosi & Entitlements Moduli** | **Yakunlandi** | `v3/m1-billing` |
+| **M2** | Admin Panel v1 | Navbatda | `v3/m2-admin` |
 | **M3** | To'lovlar (Payme, Click, Telegram) | Kutilmoqda | `v3/m3-payments` |
 | **M4** | Test Yaratish Yadrosi va Bot (grammY) | Kutilmoqda | `v3/m4-bot-creation` |
 | **M5** | Server Urinishlari & Natijalar Tahlili | Kutilmoqda | `v3/m5-attempts` |
@@ -33,3 +33,17 @@
 - [x] **S12:** Telegram bot xabarlarida `escapeHtml` orqali HTML in'ektsiya bartaraf etildi.
 - [x] **S13:** Helmet, CORS, express-rate-limit va fayl magic-bytes tekshiruvi (.docx, .pdf, .txt) o'rnatildi.
 - [x] **S14:** Productionda `express.static` faqat `dist/` papkasini xizmat qiladi, `.env` va `data/*.db` sizib chiqmaydi.
+
+---
+
+## M1 — Obuna Yadrosi va Entitlements Qabul Mezonlari (5.6) Tekshiruvi
+
+- [x] **Yagona Haqiqat Manbai (entitlements):** Barcha ruxsatlar faqat `src/lib/entitlements.ts` moduli orqali serverda majburlanadi.
+- [x] **Paywall (402):** Bepul foydalanuvchi Editor va Flashcards ga kirganda HTTP 402 oladi va Paywall ko'radi. Pro obunada darhol to'liq ochiladi.
+- [x] **AI Kvotasi:** Bepulda kuniga 3 ta, Start da 10 ta, Pro da 50 ta, Master da 300 ta. Limit tugaganda 402 QUOTA_EXCEEDED qaytariladi.
+- [x] **Obuna Hayot Sikli:**
+  - Bir xil tarifni qayta olish: muddat mavjud `expires_at` ustiga qo'shiladi.
+  - Upgrade: Start foydalanuvchisi Pro olsa, qolgan kunlar qiymati yangi tarifga bonus kun qilib hisoblanadi.
+  - Downgrade: Master foydalanuvchi Start olsa, yuqori tarif pasaytirilmaydi va yangi tarif `scheduled` navbatga qo'yiladi.
+- [x] **Avtomatik Cron:** `checkAndExpireSubscriptions()` har soatda tugagan obunalarni `expired` qiladi va navbatdagi `scheduled` obunalarni faollashtiradi.
+

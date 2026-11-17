@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { ArrowLeft, RotateCw, ChevronLeft, ChevronRight, Shuffle, CheckCircle, HelpCircle, Layers, PlayCircle, Sparkles } from 'lucide-react';
+import { 
+  ArrowLeft, RotateCw, ChevronLeft, ChevronRight, Shuffle, 
+  CheckCircle, HelpCircle, Layers, PlayCircle, Sparkles, Crown, ArrowRight 
+} from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface Question {
@@ -20,7 +23,7 @@ interface QuizData {
 export default function Flashcards() {
   const { quizId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, subscription } = useAuth();
 
   const [quiz, setQuiz] = useState<QuizData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,11 +31,14 @@ export default function Flashcards() {
   const [isFlipped, setIsFlipped] = useState(false);
   const [masteredIndexes, setMasteredIndexes] = useState<number[]>([]);
 
+  // M1: Entitlements tekshiruvi (faqat Pro va Master uchun)
+  const isProOrMaster = subscription.is_active && (subscription.plan === 'pro' || subscription.plan === 'master');
+
   useEffect(() => {
     async function loadQuiz() {
       if (!quizId) return;
       try {
-        const res = await fetch(`/api/quizzes/${quizId}`);
+        const res = await fetch(`/api/quizzes/${quizId}?mode=study`);
         if (res.ok) {
           const data = await res.json();
           if (data.quiz) {
@@ -58,34 +64,38 @@ export default function Flashcards() {
   // Klaviatura strelkalari bilan boshqarish
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === ' ' || e.key === 'Enter') {
+      if (e.code === 'Space') {
         e.preventDefault();
         setIsFlipped(prev => !prev);
-      } else if (e.key === 'ArrowRight') {
+      } else if (e.code === 'ArrowRight') {
         handleNext();
-      } else if (e.key === 'ArrowLeft') {
+      } else if (e.code === 'ArrowLeft') {
         handlePrev();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  });
+  }, [currentIndex, quiz]);
 
   const handleNext = () => {
     if (!quiz) return;
     setIsFlipped(false);
-    setCurrentIndex(prev => (prev < quiz.questions.length - 1 ? prev + 1 : 0));
+    setCurrentIndex(curr => (curr < quiz.questions.length - 1 ? curr + 1 : 0));
   };
 
   const handlePrev = () => {
     if (!quiz) return;
     setIsFlipped(false);
-    setCurrentIndex(prev => (prev > 0 ? prev - 1 : quiz.questions.length - 1));
+    setCurrentIndex(curr => (curr > 0 ? curr - 1 : quiz.questions.length - 1));
   };
 
   const handleShuffle = () => {
     if (!quiz) return;
-    const shuffled = [...quiz.questions].sort(() => Math.random() - 0.5);
+    const shuffled = [...quiz.questions];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
     setQuiz({ ...quiz, questions: shuffled });
     setCurrentIndex(0);
     setIsFlipped(false);
@@ -97,13 +107,59 @@ export default function Flashcards() {
       setMasteredIndexes(masteredIndexes.filter(i => i !== currentIndex));
     } else {
       setMasteredIndexes([...masteredIndexes, currentIndex]);
+      // Telegram Haptic
+      if (window.Telegram?.WebApp && (window.Telegram.WebApp as any).HapticFeedback) {
+        try {
+          (window.Telegram.WebApp as any).HapticFeedback.notificationOccurred('success');
+        } catch {}
+      }
     }
   };
 
+  // M1: Paywall ko'rsatish
+  if (!isProOrMaster) {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-16 text-center animate-in fade-in duration-300">
+        <div className="glass-card rounded-[2.5rem] p-8 md:p-10 border border-amber-500/40 shadow-2xl relative overflow-hidden">
+          <div className="w-20 h-20 rounded-3xl bg-amber-500/20 border-2 border-amber-500/50 text-amber-400 flex items-center justify-center mx-auto mb-6 shadow-lg shadow-amber-500/30">
+            <Crown className="w-10 h-10" />
+          </div>
+
+          <span className="text-[11px] font-black uppercase text-amber-400 bg-amber-500/10 px-4 py-1.5 rounded-full border border-amber-500/30 mb-4 inline-block">
+            PRO TARIF IMKONIYATI
+          </span>
+
+          <h2 className="text-2xl sm:text-3xl font-black text-white mb-3">
+            3D Interaktiv Flashcardlar
+          </h2>
+
+          <p className="text-sm text-slate-300 leading-relaxed mb-8 max-w-md mx-auto font-medium">
+            Savollarni 3D fazoda aylanuvchi kartochkalar yordamida yodlash va oraliq takrorlash tizimi <strong>Sessiya Pro</strong> va <strong>Grand Master</strong> tariflarida to'liq ochiq.
+          </p>
+
+          <button
+            onClick={() => navigate('/pricing')}
+            className="w-full py-4 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs uppercase tracking-wider rounded-2xl shadow-xl shadow-amber-500/25 flex items-center justify-center gap-2 mb-4 transition-all hover:scale-[1.02] active:scale-95"
+          >
+            <span>Tariflarni ko'rish (29 999 so'mdan)</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+
+          <button 
+            onClick={() => navigate(-1)}
+            className="text-xs font-bold text-slate-400 hover:text-white"
+          >
+            Orqaga qaytish
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
-      <div className="h-64 flex items-center justify-center text-slate-400 font-bold">
-        Yuklanmoqda...
+      <div className="flex justify-center items-center h-64">
+        <div className="w-8 h-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin"></div>
       </div>
     );
   }
@@ -118,7 +174,8 @@ export default function Flashcards() {
   }
 
   const currentQ = quiz.questions[currentIndex];
-  const correctAnswerText = currentQ.options[currentQ.correctAnswer] || '';
+  const correctAnswerIndex = currentQ.correctAnswer ?? 0;
+  const correctAnswerText = currentQ.options[correctAnswerIndex] || '';
   const isMastered = masteredIndexes.includes(currentIndex);
   const progressPercent = Math.round(((currentIndex + 1) / quiz.questions.length) * 100);
 
@@ -161,92 +218,93 @@ export default function Flashcards() {
         </div>
       </div>
 
-      {/* 3D Flip Card */}
+      {/* 3D Karta Maydoni */}
       <div 
         onClick={() => setIsFlipped(!isFlipped)}
-        className="w-full min-h-[380px] md:min-h-[420px] cursor-pointer perspective-[1000px] select-none my-4"
+        className="w-full h-[380px] sm:h-[420px] cursor-pointer perspective-1000 mb-6 group select-none"
       >
         <div className={cn(
-          "w-full h-full min-h-[380px] md:min-h-[420px] rounded-[2.5rem] p-8 md:p-12 transition-all duration-500 transform-style-3d relative flex flex-col justify-between shadow-2xl border",
-          !isFlipped 
-            ? "glass-card border-white/15 text-white shadow-blue-900/20" 
-            : "bg-gradient-to-tr from-emerald-600/90 to-teal-800/90 border-emerald-400/50 text-white shadow-emerald-900/30 rotate-y-180"
+          "w-full h-full relative duration-500 transform-style-3d transition-transform rounded-[2.5rem]",
+          isFlipped ? "rotate-y-180" : ""
         )}>
-          {/* Card Head */}
-          <div className="flex items-center justify-between">
-            <span className={cn(
-              "px-3.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border",
-              !isFlipped ? "bg-blue-500/15 border-blue-500/30 text-blue-400" : "bg-white/20 border-white/30 text-white"
-            )}>
-              {!isFlipped ? "Savol (Oldi)" : "To'g'ri Javob (Orqasi)"}
-            </span>
+          {/* Old Tomon (Savol) */}
+          <div className="absolute inset-0 w-full h-full backface-hidden glass-card rounded-[2.5rem] p-7 md:p-10 flex flex-col justify-between border border-white/15 shadow-2xl group-hover:border-blue-500/40 transition-colors">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-widest text-blue-400 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
+                SAVOL
+              </span>
+              <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1">
+                <RotateCw className="w-3.5 h-3.5" /> Javobni ko'rish uchun bosing
+              </span>
+            </div>
 
-            <button 
-              onClick={(e) => { e.stopPropagation(); toggleMastered(); }}
-              className={cn(
-                "p-2 rounded-full transition-colors",
-                isMastered 
-                  ? "bg-emerald-500 text-white shadow-lg shadow-emerald-500/30" 
-                  : !isFlipped ? "text-slate-500 hover:text-white" : "text-white/60 hover:text-white"
-              )}
-              title={isMastered ? "O'zlashtirilgan" : "O'zlashtirildi deb belgilash"}
-            >
-              <CheckCircle className="w-6 h-6 fill-current" />
-            </button>
+            <div className="my-auto text-center">
+              <h2 className="text-lg sm:text-2xl font-black text-white leading-relaxed">
+                {currentQ.question}
+              </h2>
+            </div>
+
+            <div className="text-center text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+              Klaviatura: [Bo'shliq] aylantirish • [→] keyingisi
+            </div>
           </div>
 
-          {/* Card Body */}
-          <div className="my-auto py-6">
-            {!isFlipped ? (
-              <div>
-                <h3 className="text-xl md:text-2xl font-bold leading-relaxed text-white text-center">
-                  {currentQ.question}
-                </h3>
-              </div>
-            ) : (
-              <div className="text-center">
-                <span className="text-emerald-200 text-xs uppercase font-black tracking-widest block mb-3">To'g'ri javob</span>
-                <p className="text-2xl md:text-3xl font-black leading-snug text-white">
-                  {correctAnswerText}
-                </p>
-                {currentQ.explanation && (
-                  <p className="mt-4 text-xs text-emerald-100/90 max-w-md mx-auto italic">
-                    {currentQ.explanation}
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
+          {/* Orqa Tomon (Javob) */}
+          <div className="absolute inset-0 w-full h-full backface-hidden rotate-y-180 bg-gradient-to-br from-slate-900/95 via-indigo-950/90 to-blue-950/95 rounded-[2.5rem] p-7 md:p-10 flex flex-col justify-between border-2 border-emerald-500/50 shadow-2xl shadow-emerald-500/10">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 bg-emerald-500/15 px-3 py-1 rounded-full border border-emerald-500/30">
+                TO'G'RI JAVOB
+              </span>
+              <span className="text-[11px] font-bold text-emerald-400">
+                ✓ Aniq javob
+              </span>
+            </div>
 
-          {/* Card Footer Hint */}
-          <div className="flex items-center justify-center gap-2 text-xs font-semibold text-slate-400">
-            <RotateCw className="w-3.5 h-3.5" />
-            <span>Javobni ko'rish uchun kartochkani bosing (yoki Probel)</span>
+            <div className="my-auto text-center">
+              <span className="text-3xl font-black text-emerald-400 mb-2 block">
+                {String.fromCharCode(65 + correctAnswerIndex)}
+              </span>
+              <h3 className="text-xl sm:text-2xl font-black text-white leading-relaxed">
+                {correctAnswerText}
+              </h3>
+            </div>
+
+            <div className="text-center text-xs text-slate-400 font-medium">
+              Yodlab olgan bo'lsangiz, quyidagi "Yodlandi" tugmasini bosing
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Navigatsiya tugmalari */}
+      {/* Pastki Navigatsiya Tugmalari */}
       <div className="flex items-center justify-between gap-3">
         <button
           onClick={handlePrev}
-          className="flex-1 py-4 px-6 bg-white/5 hover:bg-white/10 text-slate-300 font-bold text-xs uppercase tracking-wider rounded-2xl border border-white/10 flex items-center justify-center gap-2 transition-all active:scale-95"
+          className="p-3.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold transition-all active:scale-95 flex items-center justify-center"
+          title="Oldingisi"
         >
-          <ChevronLeft className="w-4 h-4" /> Oldingisi
+          <ChevronLeft className="w-5 h-5" />
         </button>
 
         <button
-          onClick={() => setIsFlipped(!isFlipped)}
-          className="py-4 px-6 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 font-black text-xs uppercase tracking-wider rounded-2xl border border-blue-500/30 transition-all flex items-center gap-2 active:scale-95"
+          onClick={toggleMastered}
+          className={cn(
+            "flex-1 py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-wider transition-all flex items-center justify-center gap-2 shadow-lg active:scale-95",
+            isMastered 
+              ? "bg-emerald-500 text-white shadow-emerald-500/30" 
+              : "bg-white/10 hover:bg-white/15 text-slate-300 border border-white/10"
+          )}
         >
-          <RotateCw className="w-4 h-4" /> Aylantirish
+          <CheckCircle className="w-4 h-4" />
+          <span>{isMastered ? "Yodlandi ✓" : "Yodlangan deb belgilash"}</span>
         </button>
 
         <button
           onClick={handleNext}
-          className="flex-1 py-4 px-6 bg-white hover:bg-slate-100 text-slate-900 font-black text-xs uppercase tracking-wider rounded-2xl shadow-lg flex items-center justify-center gap-2 transition-all active:scale-95"
+          className="p-3.5 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-white font-bold transition-all active:scale-95 flex items-center justify-center"
+          title="Keyingisi"
         >
-          Keyingisi <ChevronRight className="w-4 h-4" />
+          <ChevronRight className="w-5 h-5" />
         </button>
       </div>
     </div>

@@ -74,6 +74,12 @@ import {
   checkFileMagicBytes,
   sanitizeString
 } from './src/lib/security.ts';
+import {
+  getEffectiveEntitlements,
+  requireFeature,
+  requireAiQuota,
+  checkAndExpireSubscriptions
+} from './src/lib/entitlements.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -503,11 +509,22 @@ async function startServer() {
     res.json({ success: true, plans: PRICING_PLANS });
   });
 
+  // M1: Foydalanuvchining to'liq huquq va limitlari (entitlements)
+  app.get('/api/me/entitlements', requireAuth, (req, res) => {
+    try {
+      const entitlements = getEffectiveEntitlements(req.user!.uid);
+      res.json({ success: true, entitlements });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Joriy foydalanuvchi obuna holati (S2: req.user dan)
   app.get('/api/subscriptions/status', requireAuth, (req, res) => {
     try {
       const status = getUserSubscription(req.user!.uid);
-      res.json({ success: true, subscription: status });
+      const effective = getEffectiveEntitlements(req.user!.uid);
+      res.json({ success: true, subscription: status, entitlements: effective });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -760,8 +777,8 @@ correctAnswer - bu to'g'ri javobning options massividagi 0 dan boshlanuvchi inde
     }
   });
 
-  // Testni yangilash (S11: faqat egasi)
-  app.put('/api/quizzes/:id', requireAuth, (req, res) => {
+  // Testni yangilash / Tahrirlash (S11: faqat egasi, M1: Pro+ Editor huquqi talab qilinadi)
+  app.put('/api/quizzes/:id', requireAuth, requireFeature('editor'), (req, res) => {
     try {
       const quiz = getQuiz(req.params.id);
       if (!quiz) {
@@ -784,6 +801,19 @@ correctAnswer - bu to'g'ri javobning options massividagi 0 dan boshlanuvchi inde
         return res.status(404).json({ error: "Test topilmadi." });
       }
       res.json({ success: true, quiz: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // M1: 3D Flashcards ma'lumotlari (Faqat Pro+ obunachilar uchun)
+  app.get('/api/quizzes/:id/flashcards', requireAuth, requireFeature('flashcards'), (req, res) => {
+    try {
+      const quiz = getQuiz(req.params.id);
+      if (!quiz) {
+        return res.status(404).json({ error: "Test topilmadi." });
+      }
+      res.json({ success: true, quiz });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -946,6 +976,18 @@ correctAnswer - bu to'g'ri javobning options massividagi 0 dan boshlanuvchi inde
     }
     next(err);
   });
+
+  // M1: Obunalarning muddatini har 1 soatda tekshirish cron vazifasi
+  setInterval(() => {
+    try {
+      const stats = checkAndExpireSubscriptions();
+      if (stats.expiredCount > 0 || stats.scheduledActivated > 0) {
+        console.log(`[Subscription Cron] Tugagan obunalar: ${stats.expiredCount}, Faollashtirilgan: ${stats.scheduledActivated}`);
+      }
+    } catch (e: any) {
+      console.warn("[Subscription Cron Error]:", e.message);
+    }
+  }, 60 * 60 * 1000);
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);

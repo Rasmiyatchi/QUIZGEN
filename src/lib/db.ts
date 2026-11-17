@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
+import { activateSubscription } from './entitlements.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -76,6 +77,14 @@ export interface AttemptRecord {
 
 let dbInstance: any = null;
 let useJsonFallback = false;
+
+export function getDatabase() {
+  return dbInstance;
+}
+
+export function generateId(): string {
+  return crypto.randomUUID();
+}
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const JSON_DB_FILE = path.join(DATA_DIR, 'quizgen_store.json');
@@ -201,6 +210,51 @@ export function initDatabase() {
         user_data TEXT,
         created_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS plans (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        price_tiyin INTEGER NOT NULL,
+        duration_days INTEGER NOT NULL,
+        entitlements TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        is_public INTEGER DEFAULT 1,
+        sort INTEGER DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        plan_id TEXT NOT NULL,
+        starts_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        source TEXT NOT NULL DEFAULT 'payment',
+        order_id TEXT,
+        granted_by TEXT,
+        note TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS usage_counters (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        feature TEXT NOT NULL,
+        day TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(user_id, feature, day)
+      );
+
+      CREATE TABLE IF NOT EXISTS audit_log (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT,
+        action TEXT NOT NULL,
+        target_type TEXT,
+        target_id TEXT,
+        details TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
       );
     `);
 
@@ -782,17 +836,12 @@ export function completeOrder(orderId: string, paymentMethod?: 'click' | 'payme'
     return { success: false, message: "Tarif ma'lumoti xato" };
   }
 
-  // Foydalanuvchi obunasini yangilaymiz (pastga tushirish yo'q — S bugfix)
-  const currentUser = getUser(order.user_id);
-  const currentPlanLevel = getPlanLevel(currentUser?.subscription_plan || 'free');
-  const newPlanLevel = getPlanLevel(order.plan);
-  
-  // Agar joriy tarif yuqori bo'lsa, faqat muddat qo'shiladi, tarif tushirilmaydi
-  const effectivePlan = currentPlanLevel > newPlanLevel 
-    ? (currentUser!.subscription_plan as 'start' | 'pro' | 'master') 
-    : order.plan;
-  
-  const updatedUser = updateUserSubscription(order.user_id, effectivePlan, planInfo.durationDays);
+  // Foydalanuvchi obunasini yangilaymiz (M1: activateSubscription orqali)
+  const actRes = activateSubscription(order.user_id, order.plan, {
+    source: 'payment',
+    orderId
+  });
+  const updatedUser = getUser(order.user_id);
 
   const completedAt = new Date().toISOString();
 
