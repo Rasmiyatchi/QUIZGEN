@@ -1,16 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   Loader2, ArrowRight, ArrowLeft, CheckCircle2, XCircle, X, Shuffle, 
-  Clock, Flag, LayoutGrid, Check, Sparkles, AlertTriangle, Layers 
+  Clock, Flag, LayoutGrid, Check, AlertTriangle
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface Question {
   question: string;
   options: string[];
-  correctAnswer: number;
+  correctAnswer?: number;
   explanation?: string;
 }
 
@@ -27,7 +27,7 @@ interface QuizData {
 export default function Quiz() {
   const { quizId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, authFetch } = useAuth();
   
   const [quiz, setQuiz] = useState<QuizData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -43,14 +43,29 @@ export default function Quiz() {
   // Taymer
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [timeSpent, setTimeSpent] = useState(0);
+
+  // Modallar (TZ qoidasi 8: alert/confirm ishlatilmaydi)
   const [showGridModal, setShowGridModal] = useState(false);
   const [showConfirmFinish, setShowConfirmFinish] = useState(false);
+  const [showConfirmShuffle, setShowConfirmShuffle] = useState(false);
+  const [showTimeUpModal, setShowTimeUpModal] = useState(false);
+
+  // Stale closure xatosini bartaraf qilish uchun ref'lar
+  const answersRef = useRef<number[]>([]);
+  answersRef.current = answers;
+
+  const timeSpentRef = useRef<number>(0);
+  timeSpentRef.current = timeSpent;
+
+  const quizRef = useRef<QuizData | null>(null);
+  quizRef.current = quiz;
 
   useEffect(() => {
     async function fetchQuiz() {
       if (!quizId) return;
       try {
-        const res = await fetch(`/api/quizzes/${quizId}`);
+        const queryParam = mode === 'study' ? '?mode=study' : '';
+        const res = await fetch(`/api/quizzes/${quizId}${queryParam}`);
         if (res.ok) {
           const data = await res.json();
           if (data.quiz) {
@@ -90,9 +105,9 @@ export default function Quiz() {
       }
     }
     fetchQuiz();
-  }, [quizId]);
+  }, [quizId, mode]);
 
-  // Taymer hisobi
+  // Taymer hisobi — stale closure xatosi bartaraf etilgan
   useEffect(() => {
     if (loading || !quiz) return;
     const interval = setInterval(() => {
@@ -101,7 +116,7 @@ export default function Quiz() {
         if (prev === null) return null;
         if (prev <= 1) {
           clearInterval(interval);
-          autoSubmitOnTimeUp();
+          setShowTimeUpModal(true);
           return 0;
         }
         return prev - 1;
@@ -110,11 +125,6 @@ export default function Quiz() {
 
     return () => clearInterval(interval);
   }, [loading, quiz]);
-
-  const autoSubmitOnTimeUp = () => {
-    alert("Vaqt tugadi! Test avtomatik tarzda yakunlanmoqda.");
-    submitQuizInternal();
-  };
 
   const handleSelectOption = (optionIndex: number) => {
     if (mode === 'study' && answers[currentIndex] !== -1) return;
@@ -149,11 +159,8 @@ export default function Quiz() {
     }
   };
 
-  const handleShuffle = () => {
+  const executeShuffle = () => {
     if (!quiz) return;
-    const confirmShuffle = window.confirm("Aralashtirilsa, hozirgi javoblar tozalanadi. Davom etamizmi?");
-    if (!confirmShuffle) return;
-
     const shuffledQuestions = [...quiz.questions];
     for (let i = shuffledQuestions.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -161,13 +168,18 @@ export default function Quiz() {
     }
     
     shuffledQuestions.forEach(q => {
-      const optionsWithRef = q.options.map((opt, index) => ({ text: opt, isCorrect: index === q.correctAnswer }));
+      const optionsWithRef = q.options.map((opt, index) => ({ 
+        text: opt, 
+        isCorrect: q.correctAnswer !== undefined ? index === q.correctAnswer : false 
+      }));
       for (let i = optionsWithRef.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [optionsWithRef[i], optionsWithRef[j]] = [optionsWithRef[j], optionsWithRef[i]];
       }
       q.options = optionsWithRef.map(o => o.text);
-      q.correctAnswer = optionsWithRef.findIndex(o => o.isCorrect);
+      if (q.correctAnswer !== undefined) {
+        q.correctAnswer = optionsWithRef.findIndex(o => o.isCorrect);
+      }
     });
 
     const newData = { ...quiz, questions: shuffledQuestions };
@@ -175,63 +187,64 @@ export default function Quiz() {
     setAnswers(new Array(shuffledQuestions.length).fill(-1));
     setFlagged(new Array(shuffledQuestions.length).fill(false));
     setCurrentIndex(0);
+    setShowConfirmShuffle(false);
   };
 
-  const calculateScore = () => {
-    if (!quiz) return 0;
-    let correct = 0;
-    quiz.questions.forEach((q, i) => {
-      if (answers[i] === q.correctAnswer) {
-        correct++;
-      }
-    });
-    return correct;
-  };
-
+  // Testni serverga yuborish (S10: ball serverda hisoblanadi)
   const submitQuizInternal = async () => {
-    if (!quiz || !quizId) return;
+    const currentQuiz = quizRef.current;
+    if (!currentQuiz || !quizId) return;
     setSubmitting(true);
 
     try {
-      const correctCount = calculateScore();
-      const totalCount = quiz.questions.length;
-      const percentage = Math.round((correctCount / totalCount) * 100);
-      const resultId = Math.random().toString(36).substring(7);
+      const currentAnswers = answersRef.current;
+      const currentTimeSpent = timeSpentRef.current;
 
       const attemptPayload = {
-        id: resultId,
-        userId: user?.uid || 'anonymous',
         quizId: quizId,
-        score: correctCount,
-        total: totalCount,
-        percentage: percentage,
-        timeSpentSeconds: timeSpent,
-        answersGiven: answers
+        timeSpentSeconds: currentTimeSpent,
+        answersGiven: currentAnswers
       };
 
+      let resultId = '';
+
       try {
-        await fetch('/api/attempts', {
+        const res = await authFetch('/api/attempts', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(attemptPayload)
         });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.attempt?.id) {
+            resultId = data.attempt.id;
+          }
+        }
       } catch (beErr) {
         console.warn("Backend save attempt fallback:", beErr);
       }
 
+      // Offline / LocalStorage fallback
+      if (!resultId) {
+        resultId = 'local_' + Math.random().toString(36).substring(7);
+      }
+
       localStorage.setItem(`result_${resultId}`, JSON.stringify({
-        ...attemptPayload,
+        id: resultId,
+        quizId: quizId,
+        userId: user?.uid || 'anonymous',
+        answersGiven: currentAnswers,
+        timeSpentSeconds: currentTimeSpent,
         createdAt: new Date().toISOString()
       }));
 
       if (!localStorage.getItem(`quiz_${quizId}`)) {
-        localStorage.setItem(`quiz_${quizId}`, JSON.stringify(quiz));
+        localStorage.setItem(`quiz_${quizId}`, JSON.stringify(currentQuiz));
       }
 
       navigate(`/result/${resultId}`);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert("Testni saqlashda xatolik yuz berdi");
+      setError("Test natijasini saqlashda xatolik yuz berdi");
     } finally {
       setSubmitting(false);
     }
@@ -257,7 +270,7 @@ export default function Quiz() {
   if (error || !quiz) {
     return (
       <div className="text-center mt-12 glass-card p-8 rounded-3xl max-w-md mx-auto border border-white/10">
-        <h2 className="text-xl font-bold text-red-400 mb-2">{error}</h2>
+        <h2 className="text-xl font-bold text-red-400 mb-2">{error || "Test topilmadi"}</h2>
         <button onClick={() => navigate('/')} className="text-blue-400 font-bold hover:underline">Bosh sahifaga qaytish</button>
       </div>
     );
@@ -326,7 +339,7 @@ export default function Quiz() {
           </button>
 
           <button 
-            onClick={handleShuffle}
+            onClick={() => setShowConfirmShuffle(true)}
             className="p-1.5 rounded-full bg-white/5 hover:bg-white/10 border border-white/10 text-slate-400 hover:text-white"
             title="Savollarni aralashtirish"
           >
@@ -381,7 +394,7 @@ export default function Quiz() {
             {currentQuestion.options.map((option, idx) => {
               const hasAnswered = answers[currentIndex] !== -1;
               const isSelected = answers[currentIndex] === idx;
-              const isCorrect = currentQuestion.correctAnswer === idx;
+              const isCorrect = currentQuestion.correctAnswer !== undefined && currentQuestion.correctAnswer === idx;
 
               let cardStyle = "border-white/10 bg-white/[0.03] hover:border-blue-500/40 hover:bg-white/[0.06]";
               let letterStyle = "bg-white/5 text-slate-300 border-white/10 group-hover:border-blue-500/40 group-hover:text-blue-400";
@@ -554,9 +567,62 @@ export default function Quiz() {
         </div>
       )}
 
+      {/* Savollarni Aralashtirish Tasdig'i (Rule 8: No window.confirm) */}
+      {showConfirmShuffle && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150">
+          <div className="glass-card rounded-[2.5rem] p-6 max-w-sm w-full shadow-2xl border border-white/15 text-center animate-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 rounded-3xl bg-blue-500/15 border border-blue-500/30 text-blue-400 flex items-center justify-center mx-auto mb-4">
+              <Shuffle className="w-7 h-7" />
+            </div>
+            <h3 className="font-black text-white text-lg mb-1">Savollarni aralashtirish</h3>
+            <p className="text-xs text-slate-400 leading-relaxed mb-6">
+              Aralashtirish natijasida hozirgi belgilangan javoblar tozalanadi. Davom etasizmi?
+            </p>
+            <div className="flex gap-2.5">
+              <button 
+                onClick={() => setShowConfirmShuffle(false)}
+                className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold text-slate-300"
+              >
+                Bekor qilish
+              </button>
+              <button 
+                onClick={executeShuffle}
+                className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md shadow-blue-500/25"
+              >
+                Ha, aralashtir
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Vaqt Tugadi Modali (Rule 8: No alert) */}
+      {showTimeUpModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="glass-card rounded-[2.5rem] p-7 max-w-sm w-full shadow-2xl border border-red-500/40 text-center animate-in zoom-in-95 duration-200">
+            <div className="w-16 h-16 rounded-3xl bg-red-500/20 border-2 border-red-500/50 text-red-400 flex items-center justify-center mx-auto mb-4 animate-pulse">
+              <Clock className="w-8 h-8" />
+            </div>
+            <h3 className="font-black text-white text-xl mb-2">Vaqt tugadi!</h3>
+            <p className="text-xs text-slate-300 leading-relaxed mb-6">
+              Imtihon vaqti yakunlandi. Javoblaringiz hisoblanmoqda va test avtomatik ravishda yakunlanadi.
+            </p>
+            <button 
+              onClick={() => {
+                setShowTimeUpModal(false);
+                submitQuizInternal();
+              }}
+              className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-lg shadow-blue-500/30"
+            >
+              Natijani ko'rish
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Yakunlash tasdig'i */}
       {showConfirmFinish && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-md p-4 animate-in fade-in duration-150">
           <div className="glass-card rounded-[2.5rem] p-6 max-w-sm w-full shadow-2xl border border-white/15 text-center animate-in zoom-in-95 duration-200">
             <div className="w-14 h-14 rounded-3xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto mb-4">
               <AlertTriangle className="w-7 h-7" />

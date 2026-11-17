@@ -13,6 +13,7 @@ import {
   getAuthToken, 
   getUserSubscription 
 } from '../lib/db.ts';
+import { escapeHtml, generateId } from '../lib/security.ts';
 
 let botPollingActive = false;
 let botOffset = 0;
@@ -290,9 +291,11 @@ function sendPricingMenu(botToken: string, chatId: number | string, appUrl: stri
 function sendStatusMenu(botToken: string, chatId: number | string, user: any, appUrl: string) {
   const sub = getUserSubscription(String(user?.id || chatId));
   const planName = sub.plan === 'master' ? '🥇 Grand Master' : sub.plan === 'pro' ? '🥈 Sessiya Pro' : sub.plan === 'start' ? '🥉 Talaba Start' : 'Oddiy (Bepul)';
+  // S12 — first_name HTML escape qilinadi
+  const safeFirstName = escapeHtml(user?.first_name || 'Foydalanuvchi');
 
   const statusText = `👤 <b>Sizning profilingiz:</b>\n\n` +
-    `Ism: <b>${user?.first_name || 'Foydalanuvchi'}</b>\n` +
+    `Ism: <b>${safeFirstName}</b>\n` +
     `Telegram ID: <code>${user?.id || chatId}</code>\n` +
     `Tarif: <b>${planName}</b>\n` +
     `Holati: <b>${sub.is_active ? '✅ Faol' : 'Oddiy rejim'}</b>\n` +
@@ -347,9 +350,11 @@ async function handleBotMessage(botToken: string, appUrl: string, msg: any) {
   if (tokenCandidate) {
     const success = authorizeAuthToken(tokenCandidate, user);
     if (success) {
-      console.log(`[Telegram Auth] Token ${tokenCandidate} muvaffaqiyatli tasdiqlandi (User: ${user?.first_name}, ID: ${user?.id})`);
+      console.log(`[Telegram Auth] Token tasdiqlandi (User: ${user?.first_name}, ID: ${user?.id})`);
+      // S12 — HTML escape
+      const safeName = escapeHtml(user?.first_name || 'Foydalanuvchi');
       const confirmMsg = `✅ <b>Kirish muvaffaqiyatli tasdiqlandi!</b>\n\n` +
-        `Hurmatli <b>${user?.first_name || 'Foydalanuvchi'}</b>, brauzeringizdagi QUIZGEN saytiga kirish tasdiqlandi.\n\n` +
+        `Hurmatli <b>${safeName}</b>, brauzeringizdagi QUIZGEN saytiga kirish tasdiqlandi.\n\n` +
         `Brauzer oynasiga qaytishingiz mumkin! Sayt avtomatik ravishda ochiladi. 🚀`;
 
       return sendTelegramMessage(botToken, chatId, confirmMsg);
@@ -364,7 +369,9 @@ async function handleBotMessage(botToken: string, appUrl: string, msg: any) {
 
   // 2. /start buyrug'i (oddiy)
   if (rawText === '/start' || rawText.startsWith('/start')) {
-    const welcome = `Assalomu alaykum, <b>${user?.first_name || 'Hurmatli foydalanuvchi'}</b>! 👋\n\n` +
+    // S12 — HTML escape
+    const safeName = escapeHtml(user?.first_name || 'Hurmatli foydalanuvchi');
+    const welcome = `Assalomu alaykum, <b>${safeName}</b>! 👋\n\n` +
       `<b>QUIZGEN — HEMIS va AI Test Platformasi</b>ga xush kelibsiz!\n\n` +
       `📌 <b>Asosiy buyruqlar va imkoniyatlar:</b>\n` +
       `• 💎 /premium — Obuna tariflari (7 999 so'mdan)\n` +
@@ -436,11 +443,13 @@ async function handleBotMessage(botToken: string, appUrl: string, msg: any) {
     const hemisResult = parseHemisQuiz(extractedText);
 
     if (hemisResult.isHemis && hemisResult.questions.length > 0) {
-      const quizId = Math.random().toString(36).substring(7);
+      // S7 — UUID ishlatamiz (Math.random emas)
+      const quizId = generateId();
+      const safeTitle = escapeHtml(fileName.replace(/\.[^/.]+$/, ""));
       const newQuiz = createQuiz({
         id: quizId,
         user_id: String(user?.id || chatId),
-        title: fileName.replace(/\.[^/.]+$/, ""),
+        title: safeTitle,
         source_type: 'hemis',
         total_questions: hemisResult.questions.length,
         time_limit_minutes: 0,

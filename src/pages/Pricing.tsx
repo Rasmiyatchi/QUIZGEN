@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { 
-  Zap, Crown, Sparkles, Check, ArrowRight, ShieldCheck, 
-  CreditCard, Flame, Clock, CheckCircle2, AlertCircle, RefreshCw, Layers
+  Zap, Crown, ShieldCheck, Clock, CheckCircle2, 
+  RefreshCw, Flame, Check, AlertCircle, Send
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 interface PlanDetail {
   id: 'start' | 'pro' | 'master';
@@ -21,14 +21,17 @@ interface PlanDetail {
 }
 
 export default function Pricing() {
-  const { user, subscription, refreshSubscription } = useAuth();
+  const { user, subscription, refreshSubscription, authFetch } = useAuth();
+  const navigate = useNavigate();
   const [plans, setPlans] = useState<Record<string, PlanDetail>>({});
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [selectedPlan, setSelectedPlan] = useState<PlanDetail | null>(null);
   const [order, setOrder] = useState<any>(null);
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [paymentError, setPaymentError] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'click' | 'payme' | 'demo'>('click');
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
 
   useEffect(() => {
     fetch('/api/pricing/plans')
@@ -44,19 +47,18 @@ export default function Pricing() {
 
   const handleSelectPlan = async (plan: PlanDetail) => {
     if (!user) {
-      alert("Iltimos, avval Telegram orqali tizimga kiring!");
+      setShowLoginPrompt(true);
       return;
     }
 
     setSelectedPlan(plan);
     setPaymentSuccess(false);
+    setPaymentError('');
 
     try {
-      const res = await fetch('/api/subscriptions/order', {
+      const res = await authFetch('/api/subscriptions/order', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId: user.uid,
           plan: plan.id,
           paymentMethod: 'demo'
         })
@@ -65,31 +67,37 @@ export default function Pricing() {
       if (data.order) {
         setOrder(data.order);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Buyurtma yaratish xatosi:", err);
+      setPaymentError(err.message || "Buyurtma yaratishda xatolik");
     }
   };
 
-  const handleConfirmDemoPayment = async () => {
+  const handleConfirmPayment = async () => {
     if (!order?.id) return;
     setPaymentLoading(true);
+    setPaymentError('');
 
     try {
-      const res = await fetch('/api/subscriptions/pay-demo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ orderId: order.id })
-      });
-      const data = await res.json();
+      if (paymentMethod === 'demo') {
+        const res = await authFetch('/api/subscriptions/pay-demo', {
+          method: 'POST',
+          body: JSON.stringify({ orderId: order.id })
+        });
+        const data = await res.json();
 
-      if (data.success) {
-        setPaymentSuccess(true);
-        await refreshSubscription();
+        if (data.success) {
+          setPaymentSuccess(true);
+          await refreshSubscription();
+        } else {
+          setPaymentError(data.error || "To'lov amalga oshmadi.");
+        }
       } else {
-        alert("To'lovda xatolik yuz berdi: " + (data.error || "Noma'lum"));
+        // M4 da Click & Payme to'lov gateway'ga yo'naltiriladi
+        setPaymentError(`${paymentMethod.toUpperCase()} to'lov shlyuzi M4 bosqichida to'liq ulanadi. Hozircha sinov uchun Demo to'lov usulidan foydalaning.`);
       }
     } catch (err: any) {
-      alert("Xatolik: " + err.message);
+      setPaymentError(err.message || "To'lov jarayonida xatolik yuz berdi");
     } finally {
       setPaymentLoading(false);
     }
@@ -302,6 +310,35 @@ export default function Pricing() {
 
       </div>
 
+      {/* Login Prompt Modal (Rule 8: no alert) */}
+      {showLoginPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-150">
+          <div className="glass-card rounded-[2.5rem] p-7 max-w-sm w-full shadow-2xl border border-blue-500/30 text-center animate-in zoom-in-95 duration-200">
+            <div className="w-14 h-14 rounded-3xl bg-blue-500/20 border border-blue-500/40 text-blue-400 flex items-center justify-center mx-auto mb-4">
+              <Send className="w-7 h-7" />
+            </div>
+            <h3 className="font-black text-white text-lg mb-2">Telegram orqali kiring</h3>
+            <p className="text-xs text-slate-300 leading-relaxed mb-6 font-medium">
+              Obunani faollashtirish va profilingizga biriktirish uchun avval Telegram orqali tizimga kirishingiz lozim.
+            </p>
+            <div className="flex gap-2.5">
+              <button 
+                onClick={() => setShowLoginPrompt(false)}
+                className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold text-slate-300"
+              >
+                Bekor qilish
+              </button>
+              <button 
+                onClick={() => navigate('/login')}
+                className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md shadow-blue-500/25"
+              >
+                Kirish sahifasi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Payment Modal */}
       {selectedPlan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-200">
@@ -349,6 +386,13 @@ export default function Pricing() {
                     {order?.id || 'Buyurtma'}
                   </span>
                 </div>
+
+                {paymentError && (
+                  <div className="p-3.5 rounded-2xl bg-red-500/15 border border-red-500/30 text-red-300 text-xs flex items-center gap-2 mb-4 leading-relaxed">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                    <span>{paymentError}</span>
+                  </div>
+                )}
 
                 {/* Payment Methods */}
                 <div className="space-y-3 mb-6">
@@ -417,7 +461,7 @@ export default function Pricing() {
 
                 {/* Submit Action */}
                 <button
-                  onClick={handleConfirmDemoPayment}
+                  onClick={handleConfirmPayment}
                   disabled={paymentLoading}
                   className="w-full py-4 px-6 bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-500 text-white rounded-2xl font-black text-xs uppercase tracking-wider transition-all hover:shadow-2xl hover:shadow-blue-500/30 hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 disabled:opacity-50"
                 >

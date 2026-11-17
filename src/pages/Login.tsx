@@ -7,6 +7,9 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
+// S3: Demo faqat dev muhitida ko'rsatiladi (import.meta.env.DEV — Vite)
+const IS_DEV = import.meta.env.DEV;
+
 export default function Login() {
   const { user, loginWithTelegramWidget, loginWithTelegramUser, loginDemo } = useAuth();
   const [botUsername, setBotUsername] = useState('quizgenrobot');
@@ -78,7 +81,8 @@ export default function Login() {
             if (checkData.authorized && checkData.user) {
               clearInterval(pollTimerRef.current);
               setWaitingForAuth(false);
-              loginWithTelegramUser(checkData.user);
+              // M0: Yangi format — to'liq sessiya ma'lumotlari bilan
+              loginWithTelegramUser(checkData);
             }
           } catch (e) {
             // Polling xatoligi
@@ -86,7 +90,9 @@ export default function Login() {
         }, 1500);
       }
     } catch (err: any) {
-      alert("Kirish tokenini olishda xatolik: " + err.message);
+      console.error("Kirish tokenini olishda xatolik:", err.message);
+      setWaitingForAuth(false);
+      setShowTelegramModal(false);
     }
   };
 
@@ -117,12 +123,15 @@ export default function Login() {
          </div>
 
          <div className="flex items-center gap-3">
-           <button 
-             onClick={() => setShowDemoModal(true)}
-             className="text-xs font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-full transition-all"
-           >
-             Sinov hisobi
-           </button>
+           {/* S3: Demo tugmasi faqat development muhitida */}
+           {import.meta.env.DEV && (
+             <button 
+               onClick={() => setShowDemoModal(true)}
+               className="text-xs font-bold text-slate-400 hover:text-white px-3 py-1.5 rounded-full transition-all"
+             >
+               Sinov hisobi
+             </button>
+           )}
            <button 
              onClick={startTelegramDeepLinkAuth}
              className="text-xs font-black bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-5 py-2.5 rounded-full transition-all shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95 flex items-center gap-2"
@@ -242,10 +251,12 @@ export default function Login() {
               </a>
             )}
 
-            {/* Verification code chip */}
+            {/* Token ko'rsatish — foydalanuvchi uni bot ga yuborishi shart emas, havola yetarli */}
             <div className="p-3 rounded-2xl bg-white/5 border border-white/10 mb-6">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Kirish kodi</span>
-              <div className="font-mono text-lg font-black text-blue-400 tracking-widest">{loginToken || 'YUKLANMOQDA...'}</div>
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Havola orqali avtomatik kirish</span>
+              <div className="font-mono text-xs font-black text-blue-400 tracking-wide break-all">
+                {loginToken ? '✓ Xavfsiz token yaratildi' : 'YUKLANMOQDA...'}
+              </div>
             </div>
 
             {/* Polling Spinner Indicator */}

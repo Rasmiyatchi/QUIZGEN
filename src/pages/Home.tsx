@@ -23,7 +23,7 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, authFetch } = useAuth();
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -87,9 +87,8 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('userId', user.uid);
 
-      const response = await fetch('/api/generate-quiz', {
+      const response = await authFetch('/api/generate-quiz', {
         method: 'POST',
         body: formData,
       });
@@ -120,7 +119,7 @@ export default function Home() {
 
       const newQuiz = {
         id: quizId,
-        userId: user.uid,
+        userId: user?.uid || 'anonymous',
         title: quizTitle,
         sourceFileName: file.name,
         source: data.source || 'hemis',
@@ -131,12 +130,10 @@ export default function Home() {
       
       // SQLite bazaga saqlash
       try {
-        await fetch('/api/quizzes', {
+        await authFetch('/api/quizzes', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             id: quizId,
-            userId: user.uid,
             title: quizTitle,
             sourceType: data.source || 'hemis',
             questions: data.questions,

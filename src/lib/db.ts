@@ -10,7 +10,7 @@ export interface UserRecord {
   last_name?: string;
   username?: string;
   photo_url?: string;
-  role?: 'student' | 'teacher';
+  role?: 'student' | 'teacher' | 'admin' | 'superadmin';
   subscription_plan?: 'free' | 'start' | 'pro' | 'master';
   subscription_expires_at?: number; // ms timestamp
   ai_tests_today?: number;
@@ -768,13 +768,31 @@ export function completeOrder(orderId: string, paymentMethod?: 'click' | 'payme'
     return { success: false, message: "Buyurtma topilmadi" };
   }
 
+  // S5 fix — Allaqachon bajarilgan buyurtmani qayta bajartirish mumkin emas
+  if (order.status === 'completed') {
+    return { success: false, message: "Bu buyurtma allaqachon bajarilgan. Ikki marta to'lov mumkin emas." };
+  }
+
+  if (order.status === 'cancelled') {
+    return { success: false, message: "Bekor qilingan buyurtmani bajarib bo'lmaydi." };
+  }
+
   const planInfo = PRICING_PLANS[order.plan];
   if (!planInfo) {
     return { success: false, message: "Tarif ma'lumoti xato" };
   }
 
-  // Foydalanuvchi obunasini yangilaymiz
-  const updatedUser = updateUserSubscription(order.user_id, order.plan, planInfo.durationDays);
+  // Foydalanuvchi obunasini yangilaymiz (pastga tushirish yo'q — S bugfix)
+  const currentUser = getUser(order.user_id);
+  const currentPlanLevel = getPlanLevel(currentUser?.subscription_plan || 'free');
+  const newPlanLevel = getPlanLevel(order.plan);
+  
+  // Agar joriy tarif yuqori bo'lsa, faqat muddat qo'shiladi, tarif tushirilmaydi
+  const effectivePlan = currentPlanLevel > newPlanLevel 
+    ? (currentUser!.subscription_plan as 'start' | 'pro' | 'master') 
+    : order.plan;
+  
+  const updatedUser = updateUserSubscription(order.user_id, effectivePlan, planInfo.durationDays);
 
   const completedAt = new Date().toISOString();
 
@@ -812,13 +830,19 @@ export function getUserOrders(userId: string): OrderRecord[] {
   return (rows as OrderRecord[]) || [];
 }
 
+// Tarif darajasi (taqqoslash uchun)
+export function getPlanLevel(plan: string): number {
+  const levels: Record<string, number> = { free: 0, start: 1, pro: 2, master: 3 };
+  return levels[plan] ?? 0;
+}
+
 // 6. TELEGRAM BROWSER AUTH TOKENS (Qat'iy Telegram orqali xavfsiz kirish)
+// S7 fix: Math.random() o'rniga crypto.randomBytes
+import crypto from 'crypto';
+
 export function createAuthToken(): AuthTokenRecord {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let code = '';
-  for (let i = 0; i < 8; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  // S7 — Kriptorafik xavfsiz 32-bayt hex token
+  const code = crypto.randomBytes(32).toString('hex');
   const now = Date.now();
   const expiresAt = now + (10 * 60 * 1000); // 10 daqiqa amal qiladi
 
