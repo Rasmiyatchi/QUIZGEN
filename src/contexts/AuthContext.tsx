@@ -230,6 +230,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (res.ok) {
             const data = await res.json();
             const parsed = JSON.parse(savedUser);
+            if (data.user) {
+              parsed.role = data.user.role;
+              parsed.displayName = data.user.displayName;
+              parsed.username = data.user.username;
+              parsed.photoURL = data.user.photoURL;
+              localStorage.setItem(USER_KEY, JSON.stringify(parsed));
+            }
             setUser(parsed);
             setAccessToken(savedToken);
             if (data.subscription) setSubscription(data.subscription);

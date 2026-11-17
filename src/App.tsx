@@ -9,6 +9,7 @@ import History from './pages/History';
 import Editor from './pages/Editor';
 import Flashcards from './pages/Flashcards';
 import Pricing from './pages/Pricing';
+import Admin from './pages/Admin';
 import Navbar from './components/Navbar';
 import { Sparkles, Layers, History as HistoryIcon, LayoutGrid, Flame, Crown } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -103,6 +104,7 @@ export default function App() {
                  <Route path="/result/:resultId" element={<ProtectedRoute><Result /></ProtectedRoute>} />
                  <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
                  <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
+                 <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
                </Routes>
              </div>
           </main>

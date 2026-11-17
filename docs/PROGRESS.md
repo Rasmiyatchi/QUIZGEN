@@ -6,8 +6,8 @@
 | :--- | :--- | :--- | :--- |
 | **M0** | **Xavfsizlik va Poydevor (S1–S14)** | **Yakunlandi** | `v3/m0-security` |
 | **M1** | **Obuna Yadrosi & Entitlements Moduli** | **Yakunlandi** | `v3/m1-billing` |
-| **M2** | Admin Panel v1 | Navbatda | `v3/m2-admin` |
-| **M3** | To'lovlar (Payme, Click, Telegram) | Kutilmoqda | `v3/m3-payments` |
+| **M2** | **Admin Panel v1** | **Yakunlandi** | `v3/m2-admin` |
+| **M3** | To'lovlar (Payme, Click, Telegram) | Navbatda | `v3/m3-payments` |
 | **M4** | Test Yaratish Yadrosi va Bot (grammY) | Kutilmoqda | `v3/m4-bot-creation` |
 | **M5** | Server Urinishlari & Natijalar Tahlili | Kutilmoqda | `v3/m5-attempts` |
 | **M6** | Kutubxona Moduli (Library) | Kutilmoqda | `v3/m6-library` |
@@ -46,4 +46,19 @@
   - Upgrade: Start foydalanuvchisi Pro olsa, qolgan kunlar qiymati yangi tarifga bonus kun qilib hisoblanadi.
   - Downgrade: Master foydalanuvchi Start olsa, yuqori tarif pasaytirilmaydi va yangi tarif `scheduled` navbatga qo'yiladi.
 - [x] **Avtomatik Cron:** `checkAndExpireSubscriptions()` har soatda tugagan obunalarni `expired` qiladi va navbatdagi `scheduled` obunalarni faollashtiradi.
+
+---
+
+## M2 — Admin Panel v1 Qabul Mezonlari (TZ 6-bo'lim) Tekshiruvi
+
+- [x] **Xavfsiz Kirish (`requireAdmin`):** Faqat `admin` va `superadmin` rollariga ruxsat beriladi. Oddiy `student` foydalanuvchilariga HTTP 403 Forbidden qaytariladi va brauzerda maxsus xavfsizlik ekrani ko'rsatiladi.
+- [x] **Dashboard Ko'rsatkichlari (`GET /api/admin/stats`):** Jami foydalanuvchilar, testlar, urinishlar, buyurtmalar, jami tushum (so'm) va har bir tarif bo'yicha faol obunachilar soni real vaqtda hisoblanadi.
+- [x] **Foydalanuvchilar Boshqaruvi (`GET /api/admin/users`, `GET /api/admin/users/:id`):** Foydalanuvchilarni ismi va username bo'yicha qidirish, ularning obunasi, yaratgan testlari, urinishlari va buyurtmalari to'liq ko'rinadi.
+- [x] **Obuna Taqdim Etish va Uzaytirish (`POST /api/admin/users/:id/subscription`):** Admin istalgan foydalanuvchiga tarif va kun tanlab obuna bera oladi. Sabab (audit reason) majburiy kiritiladi va foydalanuvchiga Telegramda shaxsiy tabrik xabari yuboriladi.
+- [x] **Obunani Bekor Qilish (`POST /api/admin/users/:id/cancel-subscription`):** Admin faol obunani bekor qilib, foydalanuvchini bepul tarifga qaytara oladi.
+- [x] **Audit Jurnali (`GET /api/admin/audit`):** Barcha admin harakatlari (`grant_subscription`, `cancel_subscription`, `grant_via_bot`, `revoke_via_bot`) bajaruvchi ID, nishon ID va parametrlar bilan audit jadvalida mustahkam qayd etiladi.
+- [x] **Telegram Bot Admin Buyruqlari:** `/admin`, `/stats`, `/grant <userId> <plan> [kun]`, `/revoke <userId>` buyruqlari faqat `ADMIN_TELEGRAM_IDS` ro'yxatidagi adminlar uchun ishlaydi.
+- [x] **UI & Qoidalar:** `alert()` / `confirm()` o'rniga zamonaviy Glass modal komponentlari ishlatildi (Rule 8). Navbar da admin foydalanuvchiga maxsus "Admin Panel" tugmasi paydo bo'ladi.
+- [x] **Avtomatlashgan Testlar:** `tests/m2-admin.test.ts` da barcha rollar, admin statistikasi, qidiruv, obuna berish, bekor qilish va audit log tekshiruvlari 100% muvaffaqiyatli o'tdi.
+
 

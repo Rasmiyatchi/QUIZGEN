@@ -143,6 +143,12 @@ export function initDatabase() {
     const { DatabaseSync } = require('node:sqlite');
     dbInstance = new DatabaseSync(SQLITE_DB_FILE);
 
+    // WAL rejimi va busy_timeout bir nechta ulanishlar bloklanishini oldini oladi
+    dbInstance.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA busy_timeout = 5000;
+    `);
+
     dbInstance.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id TEXT PRIMARY KEY,
@@ -749,6 +755,31 @@ export function canGenerateAiTest(userId: string): { allowed: boolean; reason?: 
   };
 }
 
+export function cancelUserSubscription(userId: string, reason: string = 'Admin tomonidan bekor qilindi'): boolean {
+  if (useJsonFallback || !dbInstance) {
+    if (memoryStore.users[userId]) {
+      memoryStore.users[userId].subscription_plan = 'free';
+      memoryStore.users[userId].subscription_expires_at = 0;
+      saveJsonStore();
+    }
+    return true;
+  }
+
+  dbInstance.prepare(`
+    UPDATE subscriptions 
+    SET status = 'cancelled', note = ? 
+    WHERE user_id = ? AND status = 'active'
+  `).run(reason, userId);
+
+  dbInstance.prepare(`
+    UPDATE users 
+    SET subscription_plan = 'free', subscription_expires_at = 0 
+    WHERE id = ?
+  `).run(userId);
+
+  return true;
+}
+
 export function recordAiTest(userId: string) {
   const todayStr = new Date().toISOString().slice(0, 10);
   const user = getUser(userId);
@@ -968,3 +999,158 @@ export function authorizeAuthToken(token: string, userData: any): boolean {
   stmt.run(String(userData.id), userDataJson, token);
   return true;
 }
+
+// ===================================================
+// 7. ADMIN PANEL BAZA FUNKSIYALARI (M2)
+// ===================================================
+
+export function addAuditLog(actorId: string, action: string, targetType: string, targetId: string, details?: any) {
+  if (!dbInstance) return;
+  try {
+    const stmt = dbInstance.prepare(`
+      INSERT INTO audit_log (id, actor_id, action, target_type, target_id, details, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `);
+    stmt.run(
+      generateId(),
+      actorId,
+      action,
+      targetType,
+      targetId,
+      details ? JSON.stringify(details) : null
+    );
+  } catch (err: any) {
+    console.warn("addAuditLog xatosi:", err.message);
+  }
+}
+
+export function getAuditLogs(limit = 50, offset = 0) {
+  if (!dbInstance) return [];
+  try {
+    const rows = dbInstance.prepare(`
+      SELECT * FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?
+    `).all(limit, offset);
+    return rows.map((r: any) => ({
+      ...r,
+      details: r.details ? JSON.parse(r.details) : null
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export function getAdminStats() {
+  if (!dbInstance) {
+    return {
+      totalUsers: 0,
+      totalQuizzes: 0,
+      totalAttempts: 0,
+      totalOrders: 0,
+      totalRevenue: 0,
+      activeSubscriptions: { free: 0, start: 0, pro: 0, master: 0 }
+    };
+  }
+
+  try {
+    const userCount = (dbInstance.prepare('SELECT count(*) as count FROM users').get() as any)?.count || 0;
+    const quizCount = (dbInstance.prepare('SELECT count(*) as count FROM quizzes').get() as any)?.count || 0;
+    const attemptCount = (dbInstance.prepare('SELECT count(*) as count FROM attempts').get() as any)?.count || 0;
+    const orderCount = (dbInstance.prepare('SELECT count(*) as count FROM orders').get() as any)?.count || 0;
+    const revenueSum = (dbInstance.prepare("SELECT sum(amount) as sum FROM orders WHERE status = 'completed'").get() as any)?.sum || 0;
+
+    const now = Date.now();
+    const subRows = dbInstance.prepare(`
+      SELECT plan_id, count(*) as count FROM subscriptions 
+      WHERE status = 'active' AND expires_at > ?
+      GROUP BY plan_id
+    `).all(now) as any[];
+
+    const activeSubs: Record<string, number> = { free: 0, start: 0, pro: 0, master: 0 };
+    for (const r of subRows) {
+      if (r.plan_id in activeSubs) {
+        activeSubs[r.plan_id] = r.count;
+      }
+    }
+
+    return {
+      totalUsers: userCount,
+      totalQuizzes: quizCount,
+      totalAttempts: attemptCount,
+      totalOrders: orderCount,
+      totalRevenue: revenueSum,
+      activeSubscriptions: activeSubs
+    };
+  } catch (err: any) {
+    console.warn("getAdminStats xatosi:", err.message);
+    return {
+      totalUsers: 0,
+      totalQuizzes: 0,
+      totalAttempts: 0,
+      totalOrders: 0,
+      totalRevenue: 0,
+      activeSubscriptions: { free: 0, start: 0, pro: 0, master: 0 }
+    };
+  }
+}
+
+export function searchUsers(q = '', limit = 30, offset = 0) {
+  if (!dbInstance) return [];
+  try {
+    const queryTerm = `%${q.trim()}%`;
+    const rows = dbInstance.prepare(`
+      SELECT id, first_name, last_name, username, photo_url, role, subscription_plan, subscription_expires_at, created_at
+      FROM users
+      WHERE id LIKE ? OR first_name LIKE ? OR username LIKE ?
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `).all(queryTerm, queryTerm, queryTerm, limit, offset);
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+export function getAllSubscriptions(status = '', limit = 50, offset = 0) {
+  if (!dbInstance) return [];
+  try {
+    let sql = `
+      SELECT s.*, u.first_name, u.username 
+      FROM subscriptions s
+      LEFT JOIN users u ON s.user_id = u.id
+    `;
+    const params: any[] = [];
+    if (status) {
+      sql += ' WHERE s.status = ?';
+      params.push(status);
+    }
+    sql += ' ORDER BY s.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    return dbInstance.prepare(sql).all(...params);
+  } catch {
+    return [];
+  }
+}
+
+export function getAllOrders(status = '', limit = 50, offset = 0) {
+  if (!dbInstance) return [];
+  try {
+    let sql = `
+      SELECT o.*, u.first_name, u.username
+      FROM orders o
+      LEFT JOIN users u ON o.user_id = u.id
+    `;
+    const params: any[] = [];
+    if (status) {
+      sql += ' WHERE o.status = ?';
+      params.push(status);
+    }
+    sql += ' ORDER BY o.created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    return dbInstance.prepare(sql).all(...params);
+  } catch {
+    return [];
+  }
+}
+

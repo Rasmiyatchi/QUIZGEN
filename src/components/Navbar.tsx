@@ -52,6 +52,18 @@ export default function Navbar() {
       
       {/* Badjlar va Chiqish */}
       <div className="flex items-center gap-2 sm:gap-2.5">
+        {/* Admin panel tugmasi */}
+        {(user.role === 'admin' || user.role === 'superadmin') && (
+          <Link
+            to="/admin"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black bg-red-500/20 border border-red-500/40 text-red-300 hover:bg-red-500/30 transition-all shadow-sm shadow-red-500/20"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-red-400" />
+            <span className="hidden sm:inline">Admin Panel</span>
+            <span className="sm:hidden">Admin</span>
+          </Link>
+        )}
+
         {/* Premium / Tariflar tugmasi */}
         <Link 
           to="/pricing"

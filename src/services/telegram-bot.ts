@@ -11,10 +11,14 @@ import {
   getOrder, 
   authorizeAuthToken, 
   getAuthToken, 
-  getUserSubscription 
+  getUserSubscription,
+  getAdminStats,
+  addAuditLog,
+  getDatabase,
+  cancelUserSubscription
 } from '../lib/db.ts';
 import { escapeHtml, generateId } from '../lib/security.ts';
-import { getEffectiveEntitlements } from '../lib/entitlements.ts';
+import { getEffectiveEntitlements, activateSubscription, clearEntitlementsCache } from '../lib/entitlements.ts';
 
 let botPollingActive = false;
 let botOffset = 0;
@@ -410,6 +414,80 @@ async function handleBotMessage(botToken: string, appUrl: string, msg: any) {
   // 4. /status yoki /profil buyrug'i
   if (rawText.startsWith('/status') || rawText.startsWith('/profil')) {
     return sendStatusMenu(botToken, chatId, user, appUrl);
+  }
+
+  // 4.1. Admin buyruqlari (/admin, /stats, /grant, /revoke)
+  const adminIds = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+  const isAdmin = adminIds.includes(String(user?.id || chatId));
+
+  if (isAdmin) {
+    if (rawText === '/admin') {
+      const adminText = `👑 <b>QUIZGEN Administrator Paneli</b>\n\n` +
+        `Siz tizim administratori sifatida tanildingiz.\n\n` +
+        `Mavjud buyruqlar:\n` +
+        `• /stats — Umumiy platforma statistikasi\n` +
+        `• /grant &lt;userId&gt; &lt;start|pro|master&gt; [kun] — Obuna berish\n` +
+        `• /revoke &lt;userId&gt; — Obunani bekor qilish`;
+      return sendTelegramMessage(botToken, chatId, adminText, {
+        inline_keyboard: [
+          [{ text: "📊 Statistikani ko'rish", callback_data: "admin_stats" }],
+          [{ text: "🌐 Veb Admin Panel", url: `${appUrl}/admin` }]
+        ]
+      });
+    }
+
+    if (rawText === '/stats') {
+      const stats = getAdminStats();
+      const statsMsg = `📊 <b>QUIZGEN Tizim Statistikasi:</b>\n\n` +
+        `👥 Foydalanuvchilar: <b>${stats.totalUsers} ta</b>\n` +
+        `📖 Yaratilgan testlar: <b>${stats.totalQuizzes} ta</b>\n` +
+        `🎯 Urinishlar soni: <b>${stats.totalAttempts} ta</b>\n` +
+        `🧾 Buyurtmalar: <b>${stats.totalOrders} ta</b>\n` +
+        `💰 Jami daromad: <b>${stats.totalRevenue.toLocaleString()} so'm</b>\n\n` +
+        `💎 <b>Faol obunalar:</b>\n` +
+        `• Start: <b>${stats.activeSubscriptions.start} ta</b>\n` +
+        `• Pro: <b>${stats.activeSubscriptions.pro} ta</b>\n` +
+        `• Master: <b>${stats.activeSubscriptions.master} ta</b>`;
+      return sendTelegramMessage(botToken, chatId, statsMsg);
+    }
+
+    if (rawText.startsWith('/grant')) {
+      const parts = rawText.split(/\s+/);
+      const targetUserId = parts[1];
+      const targetPlan = (parts[2] || 'pro').toLowerCase() as 'start' | 'pro' | 'master';
+      const days = parseInt(parts[3]) || (PRICING_PLANS[targetPlan]?.durationDays || 30);
+
+      if (!targetUserId || !['start', 'pro', 'master'].includes(targetPlan)) {
+        return sendTelegramMessage(botToken, chatId, "⚠️ Noto'g'ri format. Namunalar:\n<code>/grant 123456789 pro 30</code>\n<code>/grant 123456789 master 90</code>");
+      }
+
+      const res = activateSubscription(targetUserId, targetPlan, {
+        source: 'admin_grant',
+        grantedBy: String(user?.id || chatId),
+        customDays: days
+      });
+
+      if (res.success) {
+        addAuditLog(String(user?.id || chatId), 'grant_via_bot', 'user', targetUserId, { plan: targetPlan, days });
+        const planName = PRICING_PLANS[targetPlan].name;
+        sendTelegramMessage(botToken, targetUserId, `🎁 <b>Xushxabar!</b> Administrator sizga <b>${planName}</b> tarifini <b>${days} kunga</b> taqdim etdi!`);
+        return sendTelegramMessage(botToken, chatId, `✅ <b>Muvaffaqiyatli!</b>\nFoydalanuvchi <code>${targetUserId}</code> ga <b>${planName}</b> tarifi (${days} kun) berildi.`);
+      } else {
+        return sendTelegramMessage(botToken, chatId, `❌ Xatolik: ${res.message}`);
+      }
+    }
+
+    if (rawText.startsWith('/revoke')) {
+      const parts = rawText.split(/\s+/);
+      const targetUserId = parts[1];
+      if (!targetUserId) {
+        return sendTelegramMessage(botToken, chatId, "⚠️ Format: <code>/revoke 123456789</code>");
+      }
+      cancelUserSubscription(targetUserId, "Bot orqali admin bekor qildi");
+      clearEntitlementsCache(targetUserId);
+      addAuditLog(String(user?.id || chatId), 'revoke_via_bot', 'user', targetUserId);
+      return sendTelegramMessage(botToken, chatId, `✅ Foydalanuvchi <code>${targetUserId}</code> obunasi bekor qilindi.`);
+    }
   }
 
   // 5. Foydalanuvchi hujjat (fayl) yuborganida

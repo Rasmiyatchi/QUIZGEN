@@ -56,7 +56,14 @@ import {
   getAuthToken,
   authorizeAuthToken,
   getUser,
-  getPlanLevel
+  getPlanLevel,
+  getAdminStats,
+  searchUsers,
+  getAllSubscriptions,
+  getAllOrders,
+  addAuditLog,
+  getAuditLogs,
+  cancelUserSubscription
 } from './src/lib/db.ts';
 import { startTelegramBot, sendTelegramMessage } from './src/services/telegram-bot.ts';
 import { 
@@ -78,7 +85,8 @@ import {
   getEffectiveEntitlements,
   requireFeature,
   requireAiQuota,
-  checkAndExpireSubscriptions
+  checkAndExpireSubscriptions,
+  activateSubscription
 } from './src/lib/entitlements.ts';
 
 const require = createRequire(import.meta.url);
@@ -281,7 +289,7 @@ async function startServer() {
         last_name: tgUser.last_name,
         username: tgUser.username,
         photo_url: tgUser.photo_url,
-        role: 'student' // DB da student, JWT da admin roli
+        role: isAdmin ? 'admin' : 'student'
       });
 
       const sub = getUserSubscription(String(tgUser.id));
@@ -307,6 +315,7 @@ async function startServer() {
           displayName: [user.first_name, user.last_name].filter(Boolean).join(' '),
           username: user.username,
           photoURL: user.photo_url,
+          role: isAdmin ? 'admin' : (user.role || 'student'),
           authType: 'tma'
         },
         accessToken,
@@ -340,7 +349,7 @@ async function startServer() {
         last_name: widgetData.last_name,
         username: widgetData.username,
         photo_url: widgetData.photo_url,
-        role: 'student' // DB da student, JWT da admin roli alohida
+        role: isAdmin ? 'admin' : 'student'
       });
 
       const sub = getUserSubscription(user.id);
@@ -365,6 +374,7 @@ async function startServer() {
           displayName: [user.first_name, user.last_name].filter(Boolean).join(' '),
           username: user.username,
           photoURL: user.photo_url,
+          role: isAdmin ? 'admin' : (user.role || 'student'),
           authType: 'widget'
         },
         accessToken,
@@ -396,14 +406,16 @@ async function startServer() {
         return res.status(401).json({ error: "Foydalanuvchi topilmadi." });
       }
 
+      const isAdmin = adminIds.includes(String(user.id));
+      const role = isAdmin ? 'admin' : ((user.role as any) || 'student');
       const sub = getUserSubscription(user.id);
       const newAccessToken = createAccessToken({
         uid: user.id,
-        role: (user.role as any) || 'student',
+        role,
         plan: (sub.plan as any) || 'free'
       });
 
-      res.json({ success: true, accessToken: newAccessToken, subscription: sub });
+      res.json({ success: true, accessToken: newAccessToken, subscription: sub, role });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -459,9 +471,11 @@ async function startServer() {
       }
       if (record.status === 'authorized' && record.user_data) {
         const sub = getUserSubscription(record.user_data.id);
+        const isAdmin = adminIds.includes(String(record.user_data.id));
+        const role = isAdmin ? 'admin' : (record.user_data.role || 'student');
         const accessToken = createAccessToken({
           uid: record.user_data.id,
-          role: record.user_data.role || 'student',
+          role,
           plan: (sub.plan as any) || 'free'
         });
         const refreshToken = createRefreshToken(record.user_data.id);
@@ -478,6 +492,7 @@ async function startServer() {
             uid: record.user_data.id,
             displayName: [record.user_data.first_name, record.user_data.last_name].filter(Boolean).join(' '),
             username: record.user_data.username,
+            role,
             authType: 'telegram'
           },
           accessToken,
@@ -496,8 +511,21 @@ async function startServer() {
     if (!user) {
       return res.status(404).json({ error: "Foydalanuvchi topilmadi." });
     }
+    const isAdmin = adminIds.includes(String(user.id));
+    const role = isAdmin ? 'admin' : (user.role || 'student');
     const sub = getUserSubscription(user.id);
-    res.json({ success: true, user, subscription: sub });
+    res.json({
+      success: true,
+      user: {
+        uid: user.id,
+        displayName: [user.first_name, user.last_name].filter(Boolean).join(' '),
+        username: user.username,
+        photoURL: user.photo_url,
+        role,
+        authType: 'telegram'
+      },
+      subscription: sub
+    });
   });
 
   // ===================================================
@@ -940,10 +968,166 @@ correctAnswer - bu to'g'ri javobning options massividagi 0 dan boshlanuvchi inde
   });
 
   // ===================================================
-  // 7. ADMIN ENDPOINTLAR
+  // 7. ADMIN ENDPOINTLAR (M2: Barchasi requireAdmin va audit bilan)
   // ===================================================
+
+  // 7.1. Dashboard ko'rsatkichlari
+  app.get('/api/admin/stats', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const stats = getAdminStats();
+      res.json({ success: true, stats });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.2. Foydalanuvchilar ro'yxati va qidiruv
   app.get('/api/admin/users', requireAuth, requireAdmin, (req, res) => {
-    res.json({ success: true, message: "Admin panel M5 da to'liq amalga oshiriladi." });
+    try {
+      const q = (req.query.q as string) || '';
+      const limit = parseInt(req.query.limit as string) || 30;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const users = searchUsers(q, limit, offset);
+      res.json({ success: true, users });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.3. Foydalanuvchi profilini olish
+  app.get('/api/admin/users/:id', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const user = getUser(req.params.id);
+      if (!user) {
+        return res.status(404).json({ error: "Foydalanuvchi topilmadi." });
+      }
+      const entitlements = getEffectiveEntitlements(user.id);
+      const orders = getUserOrders(user.id);
+      const quizzes = getUserQuizzes(user.id);
+      const attempts = getUserAttempts(user.id);
+
+      res.json({
+        success: true,
+        user,
+        entitlements,
+        orders,
+        quizzes,
+        attempts
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.4. Foydalanuvchiga obuna berish / uzaytirish (TZ 6.3 oqimi)
+  app.post('/api/admin/users/:id/subscription', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { plan, durationDays, reason, notifyUser } = req.body;
+      if (!plan || !['start', 'pro', 'master'].includes(plan)) {
+        return res.status(400).json({ error: "To'g'ri tarif tanlang: start, pro, yoki master." });
+      }
+
+      const days = parseInt(durationDays) || PRICING_PLANS[plan as 'start' | 'pro' | 'master'].durationDays;
+      const actRes = activateSubscription(req.params.id, plan, {
+        source: 'admin_grant',
+        grantedBy: req.user!.uid,
+        note: reason || "Admin tomonidan taqdim etildi",
+        customDays: days
+      });
+
+      if (!actRes.success) {
+        return res.status(400).json({ error: actRes.message || "Obuna berishda xatolik" });
+      }
+
+      // Audit log yozish
+      addAuditLog(req.user!.uid, 'grant_subscription', 'user', req.params.id, {
+        plan,
+        durationDays: days,
+        reason: reason || ''
+      });
+
+      // Foydalanuvchiga Telegramda bildirishnoma yuborish
+      if (notifyUser !== false && telegramBotToken && !req.params.id.startsWith('demo_')) {
+        const planName = PRICING_PLANS[plan as 'start' | 'pro' | 'master'].name;
+        const msg = `🎁 <b>Xushxabar! Sizga maxsus obuna taqdim etildi!</b> 🚀\n\n` +
+          `Administrator tomonidan hisobingizga <b>${planName}</b> tarifi <b>${days} kunga</b> faollashtirildi!\n\n` +
+          `Barcha testlar, 3D Flashcardlar va Test Muharriri siz uchun to'liq ochiq. O'qishlaringizda omad tilaymiz! 🌟`;
+        sendTelegramMessage(telegramBotToken, req.params.id, msg);
+      }
+
+      const updatedEnt = getEffectiveEntitlements(req.params.id);
+      res.json({ success: true, entitlements: updatedEnt, message: "Obuna muvaffaqiyatli berildi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.5. Foydalanuvchi obunasini bekor qilish
+  app.post('/api/admin/users/:id/cancel-subscription', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { reason } = req.body;
+      cancelUserSubscription(req.params.id, reason || "Admin tomonidan bekor qilindi");
+      addAuditLog(req.user!.uid, 'cancel_subscription', 'user', req.params.id, { reason });
+      clearEntitlementsCache(req.params.id);
+
+      res.json({ success: true, message: "Obuna bekor qilindi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.6. Barcha obunalar ro'yxati
+  app.get('/api/admin/subscriptions', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const status = (req.query.status as string) || '';
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const subs = getAllSubscriptions(status, limit, offset);
+      res.json({ success: true, subscriptions: subs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.7. Barcha buyurtmalar ro'yxati
+  app.get('/api/admin/orders', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const status = (req.query.status as string) || '';
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const orders = getAllOrders(status, limit, offset);
+      res.json({ success: true, orders });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.8. Audit log jurnali
+  app.get('/api/admin/audit', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 50;
+      const offset = parseInt(req.query.offset as string) || 0;
+      const logs = getAuditLogs(limit, offset);
+      res.json({ success: true, logs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.9. Foydalanuvchiga to'g'ridan-to'g'ri Telegram xabar yuborish
+  app.post('/api/admin/users/:id/message', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text) return res.status(400).json({ error: "Xabar matni talab qilinadi." });
+
+      if (telegramBotToken) {
+        sendTelegramMessage(telegramBotToken, req.params.id, escapeHtml(text));
+        addAuditLog(req.user!.uid, 'send_message', 'user', req.params.id, { text });
+      }
+      res.json({ success: true, message: "Xabar yuborildi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ===================================================
