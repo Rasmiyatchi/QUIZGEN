@@ -12,6 +12,8 @@ import {
   PRICING_PLANS 
 } from './db.ts';
 
+export { PRICING_PLANS };
+
 export interface PlanEntitlements {
   hemis_import: boolean;
   ai_daily_limit: number;

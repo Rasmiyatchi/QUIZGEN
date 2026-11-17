@@ -10,6 +10,10 @@ import Editor from './pages/Editor';
 import Flashcards from './pages/Flashcards';
 import Pricing from './pages/Pricing';
 import Admin from './pages/Admin';
+import Terms from './pages/legal/Terms';
+import Privacy from './pages/legal/Privacy';
+import Refund from './pages/legal/Refund';
+import Contacts from './pages/legal/Contacts';
 import Navbar from './components/Navbar';
 import { Sparkles, Layers, History as HistoryIcon, LayoutGrid, Flame, Crown } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -105,6 +109,11 @@ export default function App() {
                  <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
                  <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
                  <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+                 {/* Ochiq huquqiy sahifalar */}
+                 <Route path="/oferta" element={<Terms />} />
+                 <Route path="/privacy" element={<Privacy />} />
+                 <Route path="/refund" element={<Refund />} />
+                 <Route path="/contacts" element={<Contacts />} />
                </Routes>
              </div>
           </main>

@@ -19,6 +19,13 @@ import {
 } from '../lib/db.ts';
 import { escapeHtml, generateId } from '../lib/security.ts';
 import { getEffectiveEntitlements, activateSubscription, clearEntitlementsCache } from '../lib/entitlements.ts';
+import { 
+  handleApproveManualPayment, 
+  handleRejectManualPayment, 
+  MANUAL_PAYMENT_CONFIG 
+} from './payments/manual.ts';
+import { generateClickPaymentUrl } from './payments/click.ts';
+import { generatePaymePaymentUrl } from './payments/payme.ts';
 
 let botPollingActive = false;
 let botOffset = 0;
@@ -177,7 +184,7 @@ async function handleCallbackQuery(botToken: string, appUrl: string, query: any)
     const order = createOrder({
       userId: String(user.id),
       plan: planKey,
-      paymentMethod: 'demo'
+      paymentMethod: 'pending' as any
     });
 
     await answerCallbackQuery(botToken, queryId);
@@ -189,16 +196,69 @@ async function handleCallbackQuery(botToken: string, appUrl: string, query: any)
       `💰 To'lov summasi: <b>${planInfo.priceFormatted}</b>\n\n` +
       `📌 <i>Tarif imkoniyatlari:</i>\n` +
       planInfo.features.map(f => `• ${f}`).join('\n') + `\n\n` +
-      `To'lovni amalga oshirish uchun quyidagi tugmani bosing:`;
+      `Quyidagi to'lov usullaridan birini tanlang:`;
+
+    const paymentButtons: any[] = [];
+
+    // Click to'lov havolasi
+    const clickServiceId = process.env.CLICK_SERVICE_ID || '12345';
+    const clickMerchantId = process.env.CLICK_MERCHANT_ID || '67890';
+    const clickUrl = generateClickPaymentUrl({
+      serviceId: clickServiceId,
+      merchantId: clickMerchantId,
+      amount: planInfo.price,
+      orderId: order.id,
+      returnUrl: `${appUrl}/pricing?paid=1&order=${order.id}`
+    });
+    paymentButtons.push([{ text: "💳 Click orqali to'lash", url: clickUrl }]);
+
+    // Payme to'lov havolasi
+    const paymeMerchantId = process.env.PAYME_MERCHANT_ID || 'payme_merchant';
+    const paymeUrl = generatePaymePaymentUrl({
+      merchantId: paymeMerchantId,
+      orderId: order.id,
+      amount: planInfo.price,
+      callbackUrl: `${appUrl}/pricing?paid=1&order=${order.id}`
+    });
+    paymentButtons.push([{ text: "🅿️ Payme orqali to'lash", url: paymeUrl }]);
+
+    // Karta orqali to'lov (qo'lda)
+    paymentButtons.push([{ text: "🏦 Karta orqali o'tkazma (Chek bilan)", callback_data: `manual_pay_${order.id}` }]);
+
+    // Test muhiti uchun Demo to'lov
+    if (process.env.NODE_ENV !== 'production' && process.env.ENABLE_DEMO_AUTH === 'true') {
+      paymentButtons.push([{ text: "⚡ Tezkor Sinov To'lovi (Dev)", callback_data: `pay_demo_${order.id}` }]);
+    }
+
+    paymentButtons.push([{ text: "⬅️ Boshqa tariflar", callback_data: "view_plans" }]);
 
     return sendTelegramMessage(botToken, chatId, invoiceText, {
+      inline_keyboard: paymentButtons
+    });
+  }
+
+  // 1.1. Karta orqali qo'lda to'lov ma'lumotlari
+  if (data.startsWith('manual_pay_')) {
+    const orderId = data.replace('manual_pay_', '');
+    const order = getOrder(orderId);
+    if (!order) return answerCallbackQuery(botToken, queryId, "Buyurtma topilmadi", true);
+
+    await answerCallbackQuery(botToken, queryId);
+    const manualMsg = `🏦 <b>Karta orqali to'lov qilish tartibi:</b>\n\n` +
+      `📦 Buyurtma: <code>${order.id}</code>\n` +
+      `💰 To'lov summasi: <b>${order.amount.toLocaleString()} so'm</b>\n\n` +
+      `💳 <b>Karta raqami:</b> <code>${MANUAL_PAYMENT_CONFIG.cardNumber}</code>\n` +
+      `👤 <b>Karta egasi:</b> ${MANUAL_PAYMENT_CONFIG.cardHolder}\n` +
+      `🏛 <b>Bank:</b> ${MANUAL_PAYMENT_CONFIG.bankName}\n\n` +
+      `📌 <b>Ko'rsatma:</b>\n` +
+      `1. Yuqoridagi karta raqamiga aynan <b>${order.amount.toLocaleString()} so'm</b> o'tkazing.\n` +
+      `2. To'lov chekining skrinshotini (rasmini) saytga (Tariflar sahifasida chek yuklash tugmasi orqali) yoki to'g'ridan-to'g'ri administratorga yuboring.\n` +
+      `3. Administrator to'lovni tasdiqlashi bilan obunangiz avtomatik faollashadi! ✨`;
+
+    return sendTelegramMessage(botToken, chatId, manualMsg, {
       inline_keyboard: [
-        [
-          { text: "⚡ To'lovni Tasdiqlash (Faollashtirish)", callback_data: `pay_demo_${order.id}` }
-        ],
-        [
-          { text: "⬅️ Boshqa tariflar", callback_data: "view_plans" }
-        ]
+        [{ text: "🌐 Veb saytda chek yuklash", url: `${appUrl}/pricing` }],
+        [{ text: "⬅️ Boshqa tariflar", callback_data: "view_plans" }]
       ]
     });
   }
@@ -255,6 +315,38 @@ async function handleCallbackQuery(botToken: string, appUrl: string, query: any)
       return sendTelegramMessage(botToken, chatId, `✅ <b>Muvaffaqiyatli!</b>\n\nBrauzeringizda QUIZGEN profiliga kirildi.`);
     } else {
       return answerCallbackQuery(botToken, queryId, "Token muddati tugagan", true);
+    }
+  }
+
+  // 6. Admin: Qo'lda to'lov chekini tasdiqlash
+  if (data.startsWith('approve_order_')) {
+    const adminIds = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!adminIds.includes(String(user.id))) {
+      return answerCallbackQuery(botToken, queryId, "Kirish huquqi yo'q (Faqat adminlar uchun)", true);
+    }
+    const orderId = data.replace('approve_order_', '');
+    const res = await handleApproveManualPayment(orderId, String(user.id), "Telegram bot orqali tasdiqlandi", botToken);
+    if (res.success) {
+      await answerCallbackQuery(botToken, queryId, "✅ Buyurtma tasdiqlandi!", true);
+      return sendTelegramMessage(botToken, chatId, `✅ <b>Buyurtma ${orderId} muvaffaqiyatli tasdiqlandi!</b> Foydalanuvchiga obuna ochildi.`);
+    } else {
+      return answerCallbackQuery(botToken, queryId, `❌ Xatolik: ${res.message}`, true);
+    }
+  }
+
+  // 7. Admin: Qo'lda to'lov chekini rad etish
+  if (data.startsWith('reject_order_')) {
+    const adminIds = (process.env.ADMIN_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (!adminIds.includes(String(user.id))) {
+      return answerCallbackQuery(botToken, queryId, "Kirish huquqi yo'q", true);
+    }
+    const orderId = data.replace('reject_order_', '');
+    const res = await handleRejectManualPayment(orderId, String(user.id), "Chekdagi summa mos kelmadi yoki to'lov tasdiqlanmadi", botToken);
+    if (res.success) {
+      await answerCallbackQuery(botToken, queryId, "Buyurtma rad etildi", true);
+      return sendTelegramMessage(botToken, chatId, `❌ <b>Buyurtma ${orderId} rad etildi.</b> Foydalanuvchiga bildirishnoma yuborildi.`);
+    } else {
+      return answerCallbackQuery(botToken, queryId, `❌ Xatolik: ${res.message}`, true);
     }
   }
 

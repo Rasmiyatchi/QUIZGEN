@@ -88,6 +88,23 @@ import {
   checkAndExpireSubscriptions,
   activateSubscription
 } from './src/lib/entitlements.ts';
+import { 
+  handleClickPrepare, 
+  handleClickComplete, 
+  generateClickPaymentUrl 
+} from './src/services/payments/click.ts';
+import { 
+  handlePaymeRpc, 
+  verifyPaymeAuth, 
+  generatePaymePaymentUrl 
+} from './src/services/payments/payme.ts';
+import { 
+  MANUAL_PAYMENT_CONFIG, 
+  notifyAdminsNewPaymentProof, 
+  handleApproveManualPayment, 
+  handleRejectManualPayment 
+} from './src/services/payments/manual.ts';
+import { submitOrderProof } from './src/lib/db.ts';
 
 const require = createRequire(import.meta.url);
 
@@ -612,6 +629,211 @@ async function startServer() {
     try {
       const orders = getUserOrders(req.user!.uid);
       res.json({ success: true, orders });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ===================================================
+  // 3.1. TO'LOV TIZIMLARI (Click, Payme, Manual) — M3
+  // ===================================================
+
+  // To'lov konfiguratsiyasi (ochiq)
+  app.get('/api/payments/config', (req, res) => {
+    res.json({
+      success: true,
+      click: Boolean(process.env.CLICK_SERVICE_ID && process.env.CLICK_SECRET_KEY),
+      payme: Boolean(process.env.PAYME_KEY),
+      manual: true,
+      manualConfig: {
+        cardNumber: MANUAL_PAYMENT_CONFIG.cardNumber,
+        cardHolder: MANUAL_PAYMENT_CONFIG.cardHolder,
+        bankName: MANUAL_PAYMENT_CONFIG.bankName
+      }
+    });
+  });
+
+  // Click Checkout havolasini olish
+  app.post('/api/payments/checkout/click', requireAuth, (req, res) => {
+    try {
+      const { orderId } = req.body;
+      const order = getOrder(orderId);
+      if (!order) return res.status(404).json({ error: "Buyurtma topilmadi." });
+      if (order.user_id !== req.user!.uid) return res.status(403).json({ error: "Ruxsat yo'q." });
+      if (order.status === 'completed') return res.status(400).json({ error: "Buyurtma allaqachon to'langan." });
+
+      const serviceId = process.env.CLICK_SERVICE_ID || '12345';
+      const merchantId = process.env.CLICK_MERCHANT_ID || '67890';
+      const returnUrl = `${APP_URL}/pricing?paid=1&order=${order.id}`;
+
+      const redirectUrl = generateClickPaymentUrl({
+        serviceId,
+        merchantId,
+        amount: order.amount,
+        orderId: order.id,
+        returnUrl
+      });
+
+      res.json({ success: true, redirectUrl });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Payme Checkout havolasini olish
+  app.post('/api/payments/checkout/payme', requireAuth, (req, res) => {
+    try {
+      const { orderId } = req.body;
+      const order = getOrder(orderId);
+      if (!order) return res.status(404).json({ error: "Buyurtma topilmadi." });
+      if (order.user_id !== req.user!.uid) return res.status(403).json({ error: "Ruxsat yo'q." });
+      if (order.status === 'completed') return res.status(400).json({ error: "Buyurtma allaqachon to'langan." });
+
+      const merchantId = process.env.PAYME_MERCHANT_ID || 'payme_merchant_id';
+      const callbackUrl = `${APP_URL}/pricing?paid=1&order=${order.id}`;
+
+      const redirectUrl = generatePaymePaymentUrl({
+        merchantId,
+        orderId: order.id,
+        amount: order.amount,
+        callbackUrl
+      });
+
+      res.json({ success: true, redirectUrl });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Click Webhook (Prepare & Complete)
+  const clickWebhookHandler = (req: any, res: any) => {
+    const secretKey = process.env.CLICK_SECRET_KEY || 'click_test_secret';
+    const action = Number(req.body?.action);
+
+    if (action === 0) {
+      const result = handleClickPrepare(req.body, secretKey);
+      return res.json(result);
+    } else if (action === 1) {
+      const result = handleClickComplete(req.body, secretKey);
+      return res.json(result);
+    } else {
+      return res.json({
+        click_trans_id: req.body?.click_trans_id,
+        merchant_trans_id: req.body?.merchant_trans_id,
+        error: -3,
+        error_note: "Noma'lum amal (action)"
+      });
+    }
+  };
+
+  app.post('/api/payments/click', express.urlencoded({ extended: true }), express.json(), clickWebhookHandler);
+  app.post('/api/payments/click/prepare', express.urlencoded({ extended: true }), express.json(), (req, res) => {
+    const secretKey = process.env.CLICK_SECRET_KEY || 'click_test_secret';
+    res.json(handleClickPrepare(req.body, secretKey));
+  });
+  app.post('/api/payments/click/complete', express.urlencoded({ extended: true }), express.json(), (req, res) => {
+    const secretKey = process.env.CLICK_SECRET_KEY || 'click_test_secret';
+    res.json(handleClickComplete(req.body, secretKey));
+  });
+
+  // Payme Webhook (JSON-RPC 2.0)
+  app.post('/api/payments/payme', async (req, res) => {
+    const paymeKey = process.env.PAYME_KEY || 'payme_test_key';
+    const authHeader = req.headers.authorization;
+
+    if (!verifyPaymeAuth(authHeader, paymeKey)) {
+      return res.json({
+        jsonrpc: '2.0',
+        id: req.body?.id || null,
+        error: { code: -32504, message: "Kirish huquqi yo'q (Avtorizatsiya xatosi)" }
+      });
+    }
+
+    const response = await handlePaymeRpc(req.body);
+    res.json(response);
+  });
+
+  // Qo'lda to'lov chekini yuklash (Proof image upload)
+  app.post('/api/orders/:id/proof', requireAuth, upload.single('proof'), async (req, res) => {
+    try {
+      const orderId = req.params.id;
+      const order = getOrder(orderId);
+      if (!order) return res.status(404).json({ error: "Buyurtma topilmadi." });
+      if (order.user_id !== req.user!.uid) return res.status(403).json({ error: "Bu buyurtma sizniki emas." });
+      if (order.status === 'completed') return res.status(400).json({ error: "Buyurtma allaqachon to'langan." });
+
+      const file = req.file;
+      if (!file) return res.status(400).json({ error: "Chek rasmi yuklanmadi." });
+
+      const ext = (file.originalname.split('.').pop() || 'jpg').toLowerCase();
+      if (!['jpg', 'jpeg', 'png', 'webp'].includes(ext)) {
+        return res.status(400).json({ error: "Faqat rasm fayllar (.jpg, .png, .webp) qabul qilinadi." });
+      }
+
+      if (!checkFileMagicBytes(file.buffer, ext)) {
+        return res.status(400).json({ error: "Rasm formati mos kelmadi." });
+      }
+
+      const proofsDir = path.join(process.cwd(), 'data', 'proofs');
+      if (!fs.existsSync(proofsDir)) {
+        fs.mkdirSync(proofsDir, { recursive: true });
+      }
+
+      const fileName = `proof_${orderId}_${Date.now()}.${ext}`;
+      const filePath = path.join(proofsDir, fileName);
+      fs.writeFileSync(filePath, file.buffer);
+
+      const proofUrl = `/api/proofs/${fileName}`;
+      submitOrderProof(orderId, proofUrl);
+
+      // Adminga bildirishnoma yuborish
+      notifyAdminsNewPaymentProof({
+        orderId,
+        botToken: telegramBotToken,
+        adminIds,
+        proofUrl,
+        appUrl: APP_URL
+      });
+
+      res.json({ success: true, message: "Chek qabul qilindi. Tez orada administrator tomonidan tasdiqlanadi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Chek rasmini ko'rsatish
+  app.get('/api/proofs/:filename', (req, res) => {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(process.cwd(), 'data', 'proofs', filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Rasm topilmadi." });
+    }
+    res.sendFile(filePath);
+  });
+
+  // Admin chekni tasdiqlashi (Approve)
+  app.post('/api/admin/orders/:id/approve', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { note } = req.body;
+      const result = await handleApproveManualPayment(req.params.id, req.user!.uid, note, telegramBotToken);
+      if (!result.success) {
+        return res.status(400).json({ error: result.message });
+      }
+      res.json({ success: true, message: "To'lov tasdiqlandi va obuna faollashtirildi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Admin chekni rad etishi (Reject)
+  app.post('/api/admin/orders/:id/reject', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { reason } = req.body;
+      const result = await handleRejectManualPayment(req.params.id, req.user!.uid, reason, telegramBotToken);
+      if (!result.success) {
+        return res.status(400).json({ error: result.message });
+      }
+      res.json({ success: true, message: "Buyurtma rad etildi." });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

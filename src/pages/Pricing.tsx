@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   Zap, Crown, ShieldCheck, Clock, CheckCircle2, 
-  RefreshCw, Flame, Check, AlertCircle, Send
+  RefreshCw, Flame, Check, AlertCircle, Send,
+  CreditCard, Upload, Copy, CheckCheck, FileText
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 
 interface PlanDetail {
   id: 'start' | 'pro' | 'master';
@@ -23,6 +24,7 @@ interface PlanDetail {
 export default function Pricing() {
   const { user, subscription, refreshSubscription, authFetch } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [plans, setPlans] = useState<Record<string, PlanDetail>>({});
   const [loadingPlans, setLoadingPlans] = useState(true);
   const [selectedPlan, setSelectedPlan] = useState<PlanDetail | null>(null);
@@ -30,10 +32,17 @@ export default function Pricing() {
   const [paymentLoading, setPaymentLoading] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
   const [paymentError, setPaymentError] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'click' | 'payme' | 'demo'>('click');
+  const [paymentMethod, setPaymentMethod] = useState<'click' | 'payme' | 'manual' | 'demo'>('click');
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
 
+  // M3: To'lov tizimlari va chek yuklash holati
+  const [paymentConfig, setPaymentConfig] = useState<any>(null);
+  const [proofFile, setProofFile] = useState<File | null>(null);
+  const [proofSubmitted, setProofSubmitted] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+
   useEffect(() => {
+    // Tariflarni yuklash
     fetch('/api/pricing/plans')
       .then(res => res.json())
       .then(data => {
@@ -43,7 +52,27 @@ export default function Pricing() {
       })
       .catch(err => console.error("Tariflarni yuklashda xatolik:", err))
       .finally(() => setLoadingPlans(false));
-  }, []);
+
+    // To'lov konfiguratsiyasini yuklash
+    fetch('/api/payments/config')
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) setPaymentConfig(data);
+      })
+      .catch(() => {});
+      
+    // Agar to'lovdan qaytib kelgan bo'lsa (?paid=1)
+    if (searchParams.get('paid') === '1') {
+      refreshSubscription();
+      setPaymentSuccess(true);
+    }
+  }, [searchParams, refreshSubscription]);
+
+  const copyCardNumber = (num: string) => {
+    navigator.clipboard.writeText(num.replace(/\s+/g, ''));
+    setCopySuccess(true);
+    setTimeout(() => setCopySuccess(false), 2000);
+  };
 
   const handleSelectPlan = async (plan: PlanDetail) => {
     if (!user) {
@@ -54,13 +83,15 @@ export default function Pricing() {
     setSelectedPlan(plan);
     setPaymentSuccess(false);
     setPaymentError('');
+    setProofSubmitted(false);
+    setProofFile(null);
 
     try {
       const res = await authFetch('/api/subscriptions/order', {
         method: 'POST',
         body: JSON.stringify({
           plan: plan.id,
-          paymentMethod: 'demo'
+          paymentMethod
         })
       });
       const data = await res.json();
@@ -79,7 +110,49 @@ export default function Pricing() {
     setPaymentError('');
 
     try {
-      if (paymentMethod === 'demo') {
+      if (paymentMethod === 'click') {
+        const res = await authFetch('/api/payments/checkout/click', {
+          method: 'POST',
+          body: JSON.stringify({ orderId: order.id })
+        });
+        const data = await res.json();
+        if (data.redirectUrl) {
+          window.location.href = data.redirectUrl;
+          return;
+        } else {
+          setPaymentError(data.error || "Click to'lov havolasini olishda xatolik");
+        }
+      } else if (paymentMethod === 'payme') {
+        const res = await authFetch('/api/payments/checkout/payme', {
+          method: 'POST',
+          body: JSON.stringify({ orderId: order.id })
+        });
+        const data = await res.json();
+        if (data.redirectUrl) {
+          window.location.href = data.redirectUrl;
+          return;
+        } else {
+          setPaymentError(data.error || "Payme to'lov havolasini olishda xatolik");
+        }
+      } else if (paymentMethod === 'manual') {
+        if (!proofFile) {
+          setPaymentError("Iltimos, to'lov cheki skrinshotini (rasmini) tanlang.");
+          setPaymentLoading(false);
+          return;
+        }
+        const formData = new FormData();
+        formData.append('proof', proofFile);
+        const res = await authFetch(`/api/orders/${order.id}/proof`, {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.success) {
+          setProofSubmitted(true);
+        } else {
+          setPaymentError(data.error || "Chekni yuklashda xatolik.");
+        }
+      } else if (paymentMethod === 'demo') {
         const res = await authFetch('/api/subscriptions/pay-demo', {
           method: 'POST',
           body: JSON.stringify({ orderId: order.id })
@@ -92,9 +165,6 @@ export default function Pricing() {
         } else {
           setPaymentError(data.error || "To'lov amalga oshmadi.");
         }
-      } else {
-        // M4 da Click & Payme to'lov gateway'ga yo'naltiriladi
-        setPaymentError(`${paymentMethod.toUpperCase()} to'lov shlyuzi M4 bosqichida to'liq ulanadi. Hozircha sinov uchun Demo to'lov usulidan foydalaning.`);
       }
     } catch (err: any) {
       setPaymentError(err.message || "To'lov jarayonida xatolik yuz berdi");
@@ -308,6 +378,22 @@ export default function Pricing() {
           </div>
         </div>
 
+        {/* Footer Legal Links */}
+        <div className="mt-12 pt-8 border-t border-white/10 text-center">
+          <div className="flex flex-wrap justify-center items-center gap-6 text-xs font-bold text-slate-400 mb-4">
+            <Link to="/oferta" className="hover:text-blue-400 transition-colors">Ommaviy Oferta</Link>
+            <span>•</span>
+            <Link to="/privacy" className="hover:text-blue-400 transition-colors">Maxfiylik Siyosati</Link>
+            <span>•</span>
+            <Link to="/refund" className="hover:text-blue-400 transition-colors">To'lovni Qaytarish</Link>
+            <span>•</span>
+            <Link to="/contacts" className="hover:text-blue-400 transition-colors">Bog'lanish & Rekvizitlar</Link>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            © 2026 QUIZGEN v3. Barcha huquqlar himoyalangan. To'lovlar O'zbekiston Respublikasi qonunchiligiga muvofiq xavfsiz qabul qilinadi.
+          </p>
+        </div>
+
       </div>
 
       {/* Login Prompt Modal (Rule 8: no alert) */}
@@ -374,6 +460,22 @@ export default function Pricing() {
                   Boshlash 🚀
                 </button>
               </div>
+            ) : proofSubmitted ? (
+              <div className="text-center py-6">
+                <div className="w-16 h-16 rounded-3xl bg-blue-500/20 border-2 border-blue-500 text-blue-400 flex items-center justify-center mx-auto mb-4 animate-pulse">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+                <h4 className="text-xl font-black text-white mb-2">Chek Muvaffaqiyatli Yuklandi! 🧾</h4>
+                <p className="text-xs text-slate-300 mb-6 font-medium leading-relaxed">
+                  To'lov cheki administratorga yuborildi. Odatda 5-15 daqiqa ichida tekshirilib, obunangiz faollashtiriladi. Natijani Telegram botingizda ham ko'rasiz!
+                </p>
+                <button
+                  onClick={() => setSelectedPlan(null)}
+                  className="w-full py-4 bg-white/10 hover:bg-white/20 text-white font-black text-xs uppercase tracking-wider rounded-2xl border border-white/20"
+                >
+                  Tushunarli, yopish
+                </button>
+              </div>
             ) : (
               <div>
                 {/* Order Summary */}
@@ -438,25 +540,86 @@ export default function Pricing() {
                     <input type="radio" checked={paymentMethod === 'payme'} onChange={() => {}} className="accent-teal-500" />
                   </label>
 
-                  {/* Demo Sinov To'lovi */}
+                  {/* Karta orqali (Chek bilan) */}
                   <label 
-                    onClick={() => setPaymentMethod('demo')}
+                    onClick={() => setPaymentMethod('manual')}
                     className={cn(
                       "p-4 rounded-2xl border flex items-center justify-between cursor-pointer transition-all",
-                      paymentMethod === 'demo' ? "bg-amber-600/20 border-amber-500 shadow-md" : "bg-white/5 border-white/10 hover:border-white/20"
+                      paymentMethod === 'manual' ? "bg-purple-600/20 border-purple-500 shadow-md" : "bg-white/5 border-white/10 hover:border-white/20"
                     )}
                   >
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center font-black text-xs">
-                        ⚡
+                      <div className="w-8 h-8 rounded-xl bg-purple-500/20 text-purple-400 flex items-center justify-center font-black text-xs">
+                        <CreditCard className="w-4 h-4" />
                       </div>
                       <div>
-                        <h5 className="text-sm font-bold text-white">Tezkor Sinov Rejimi (Demo)</h5>
-                        <p className="text-[11px] text-amber-300">Tizimni tekshirish uchun 1 bosishda faollashtirish</p>
+                        <h5 className="text-sm font-bold text-white">Bank Kartasiga O'tkazma</h5>
+                        <p className="text-[11px] text-slate-400">Karta raqamiga o'tkazib, chek yuklash</p>
                       </div>
                     </div>
-                    <input type="radio" checked={paymentMethod === 'demo'} onChange={() => {}} className="accent-amber-500" />
+                    <input type="radio" checked={paymentMethod === 'manual'} onChange={() => {}} className="accent-purple-500" />
                   </label>
+
+                  {/* Karta detallari va chek yuklash formasi */}
+                  {paymentMethod === 'manual' && (
+                    <div className="p-4 rounded-2xl bg-white/5 border border-purple-500/30 space-y-3 animate-in fade-in">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Karta Raqami:</span>
+                          <span className="text-base font-black text-white tracking-widest font-mono">
+                            {paymentConfig?.manualConfig?.cardNumber || '9860 1201 3456 7890'}
+                          </span>
+                          <span className="text-[11px] text-slate-400 block mt-0.5">
+                            {paymentConfig?.manualConfig?.cardHolder || 'QUIZGEN PLATFORMASI'} ({paymentConfig?.manualConfig?.bankName || 'Humo / Uzcard'})
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyCardNumber(paymentConfig?.manualConfig?.cardNumber || '9860 1201 3456 7890')}
+                          className="p-2.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 font-bold text-xs flex items-center gap-1.5 transition-all"
+                        >
+                          {copySuccess ? <CheckCheck className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                          <span>{copySuccess ? 'Nusxa olindi!' : 'Nusxa'}</span>
+                        </button>
+                      </div>
+
+                      <div>
+                        <label className="text-xs font-bold text-slate-300 block mb-1.5">To'lov cheki skrinshoti (.jpg, .png):</label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          onChange={(e) => setProofFile(e.target.files?.[0] || null)}
+                          className="w-full text-xs text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-purple-600/30 file:text-purple-300 hover:file:bg-purple-600/50 cursor-pointer"
+                        />
+                        {proofFile && (
+                          <p className="text-[11px] text-emerald-400 mt-1 font-bold">
+                            Tanlandi: {proofFile.name} ({(proofFile.size / 1024).toFixed(1)} KB)
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Demo Sinov To'lovi (faqat dev/sinov uchun) */}
+                  {Boolean(paymentConfig?.manualConfig) && (
+                    <label 
+                      onClick={() => setPaymentMethod('demo')}
+                      className={cn(
+                        "p-3 rounded-2xl border flex items-center justify-between cursor-pointer transition-all",
+                        paymentMethod === 'demo' ? "bg-amber-600/20 border-amber-500 shadow-md" : "bg-white/5 border-white/10 hover:border-white/20"
+                      )}
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-6 h-6 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-black text-xs">
+                          ⚡
+                        </div>
+                        <div>
+                          <h5 className="text-xs font-bold text-white">Tezkor Sinov Rejimi (Demo)</h5>
+                        </div>
+                      </div>
+                      <input type="radio" checked={paymentMethod === 'demo'} onChange={() => {}} className="accent-amber-500" />
+                    </label>
+                  )}
                 </div>
 
                 {/* Submit Action */}
@@ -470,10 +633,15 @@ export default function Pricing() {
                       <RefreshCw className="w-4 h-4 animate-spin" />
                       To'lov tasdiqlanmoqda...
                     </>
+                  ) : paymentMethod === 'manual' ? (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      Chekni Yuklash va Tasdiqlash
+                    </>
                   ) : (
                     <>
                       <ShieldCheck className="w-4 h-4" />
-                      To'lovni Tasdiqlash ({selectedPlan.priceFormatted})
+                      To'lovga O'tish ({selectedPlan.priceFormatted})
                     </>
                   )}
                 </button>

@@ -24,10 +24,40 @@ export interface OrderRecord {
   user_id: string;
   plan: 'start' | 'pro' | 'master';
   amount: number;
-  status: 'pending' | 'completed' | 'cancelled';
-  payment_method: 'click' | 'payme' | 'telegram' | 'demo';
+  status: 'pending' | 'pending_review' | 'completed' | 'cancelled';
+  payment_method: 'click' | 'payme' | 'telegram' | 'manual' | 'demo';
+  proof_image?: string;
+  admin_note?: string;
+  reviewed_by?: string;
+  reviewed_at?: string;
   created_at: string;
   completed_at?: string;
+}
+
+export interface PaymeTxRecord {
+  id: string;
+  order_id: string;
+  state: number; // 1 = created, 2 = performed, -1 = cancelled after created, -2 = cancelled after performed
+  amount: number; // tiyin (1 sum = 100 tiyin)
+  create_time: number;
+  perform_time: number;
+  cancel_time: number;
+  reason?: number;
+  created_at?: string;
+}
+
+export interface ClickTxRecord {
+  click_trans_id: string;
+  service_id: number;
+  click_paydoc_id?: string;
+  merchant_trans_id: string;
+  amount: number;
+  action: number;
+  error: number;
+  error_note?: string;
+  sign_time: string;
+  status: 'prepare' | 'complete' | 'cancelled';
+  created_at?: string;
 }
 
 export interface AuthTokenRecord {
@@ -262,6 +292,33 @@ export function initDatabase() {
         details TEXT,
         created_at TEXT DEFAULT (datetime('now'))
       );
+
+      CREATE TABLE IF NOT EXISTS payme_transactions (
+        id TEXT PRIMARY KEY,
+        order_id TEXT NOT NULL,
+        state INTEGER NOT NULL DEFAULT 1,
+        amount INTEGER NOT NULL,
+        create_time INTEGER NOT NULL,
+        perform_time INTEGER DEFAULT 0,
+        cancel_time INTEGER DEFAULT 0,
+        reason INTEGER,
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (order_id) REFERENCES orders(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS click_transactions (
+        click_trans_id TEXT PRIMARY KEY,
+        service_id INTEGER NOT NULL,
+        click_paydoc_id TEXT,
+        merchant_trans_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        action INTEGER NOT NULL,
+        error INTEGER DEFAULT 0,
+        error_note TEXT,
+        sign_time TEXT,
+        status TEXT NOT NULL DEFAULT 'prepare',
+        created_at TEXT DEFAULT (datetime('now'))
+      );
     `);
 
     // Foydalanuvchilar jadvaliga obuna ustunlarini qo'shish (agar bo'lmasa)
@@ -277,6 +334,19 @@ export function initDatabase() {
       } catch (e) {
         // Ustun allaqachon mavjud bo'lsa xatolik e'tiborga olinmaydi
       }
+    }
+
+    // Buyurtmalar jadvaliga chek/moderatsiya ustunlarini qo'shish (agar bo'lmasa)
+    const orderCols = [
+      'proof_image TEXT DEFAULT NULL',
+      'admin_note TEXT DEFAULT NULL',
+      'reviewed_by TEXT DEFAULT NULL',
+      'reviewed_at TEXT DEFAULT NULL'
+    ];
+    for (const col of orderCols) {
+      try {
+        dbInstance.exec(`ALTER TABLE orders ADD COLUMN ${col}`);
+      } catch (e) {}
     }
 
     console.log("SQLite ma'lumotlar bazasi muvaffaqiyatli ulandi: " + SQLITE_DB_FILE);
@@ -908,6 +978,153 @@ export function getUserOrders(userId: string): OrderRecord[] {
   }
   const rows = dbInstance.prepare('SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC').all(userId);
   return (rows as OrderRecord[]) || [];
+}
+
+// ===================================================
+// PAYME, CLICK VA MANUAL TO'LOV HELPERLARI
+// ===================================================
+
+export function savePaymeTransaction(tx: PaymeTxRecord) {
+  if (useJsonFallback || !dbInstance) return;
+  const stmt = dbInstance.prepare(`
+    INSERT INTO payme_transactions (id, order_id, state, amount, create_time, perform_time, cancel_time, reason)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(tx.id, tx.order_id, tx.state, tx.amount, tx.create_time, tx.perform_time || 0, tx.cancel_time || 0, tx.reason || null);
+}
+
+export function getPaymeTransaction(id: string): PaymeTxRecord | null {
+  if (useJsonFallback || !dbInstance) return null;
+  const row = dbInstance.prepare('SELECT * FROM payme_transactions WHERE id = ?').get(id);
+  return (row as PaymeTxRecord) || null;
+}
+
+export function getPaymeTransactionByOrderId(orderId: string): PaymeTxRecord | null {
+  if (useJsonFallback || !dbInstance) return null;
+  const row = dbInstance.prepare('SELECT * FROM payme_transactions WHERE order_id = ?').get(orderId);
+  return (row as PaymeTxRecord) || null;
+}
+
+export function updatePaymeTransaction(id: string, updates: Partial<PaymeTxRecord>) {
+  if (useJsonFallback || !dbInstance) return;
+  const fields: string[] = [];
+  const values: any[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return;
+  values.push(id);
+  dbInstance.prepare(`UPDATE payme_transactions SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+}
+
+export function getPaymeStatements(from: number, to: number): PaymeTxRecord[] {
+  if (useJsonFallback || !dbInstance) return [];
+  const rows = dbInstance.prepare('SELECT * FROM payme_transactions WHERE create_time >= ? AND create_time <= ?').all(from, to);
+  return (rows as PaymeTxRecord[]) || [];
+}
+
+export function saveClickTransaction(tx: ClickTxRecord) {
+  if (useJsonFallback || !dbInstance) return;
+  const stmt = dbInstance.prepare(`
+    INSERT OR REPLACE INTO click_transactions (click_trans_id, service_id, click_paydoc_id, merchant_trans_id, amount, action, error, error_note, sign_time, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(
+    String(tx.click_trans_id),
+    tx.service_id,
+    tx.click_paydoc_id ? String(tx.click_paydoc_id) : null,
+    tx.merchant_trans_id,
+    tx.amount,
+    tx.action,
+    tx.error || 0,
+    tx.error_note || null,
+    tx.sign_time,
+    tx.status || 'prepare'
+  );
+}
+
+export function getClickTransaction(clickTransId: string): ClickTxRecord | null {
+  if (useJsonFallback || !dbInstance) return null;
+  const row = dbInstance.prepare('SELECT * FROM click_transactions WHERE click_trans_id = ?').get(String(clickTransId));
+  return (row as ClickTxRecord) || null;
+}
+
+export function getClickTransactionByOrderId(orderId: string): ClickTxRecord | null {
+  if (useJsonFallback || !dbInstance) return null;
+  const row = dbInstance.prepare('SELECT * FROM click_transactions WHERE merchant_trans_id = ?').get(orderId);
+  return (row as ClickTxRecord) || null;
+}
+
+export function updateClickTransaction(clickTransId: string, updates: Partial<ClickTxRecord>) {
+  if (useJsonFallback || !dbInstance) return;
+  const fields: string[] = [];
+  const values: any[] = [];
+  for (const [key, value] of Object.entries(updates)) {
+    fields.push(`${key} = ?`);
+    values.push(value);
+  }
+  if (fields.length === 0) return;
+  values.push(String(clickTransId));
+  dbInstance.prepare(`UPDATE click_transactions SET ${fields.join(', ')} WHERE click_trans_id = ?`).run(...values);
+}
+
+export function submitOrderProof(orderId: string, proofUrl: string): boolean {
+  if (useJsonFallback || !dbInstance) {
+    if (memoryStore.orders[orderId]) {
+      memoryStore.orders[orderId].status = 'pending_review';
+      memoryStore.orders[orderId].payment_method = 'manual';
+      memoryStore.orders[orderId].proof_image = proofUrl;
+      saveJsonStore();
+      return true;
+    }
+    return false;
+  }
+  const res = dbInstance.prepare(`
+    UPDATE orders 
+    SET status = 'pending_review', payment_method = 'manual', proof_image = ?
+    WHERE id = ? AND status = 'pending'
+  `).run(proofUrl, orderId);
+  return res.changes > 0;
+}
+
+export function approveManualOrder(orderId: string, adminId: string, note?: string): { success: boolean; message?: string } {
+  const order = getOrder(orderId);
+  if (!order) return { success: false, message: "Buyurtma topilmadi." };
+  if (order.status === 'completed') return { success: false, message: "Buyurtma allaqachon bajarilgan." };
+
+  const comp = completeOrder(orderId, 'manual');
+  if (!comp.success) return comp;
+
+  if (dbInstance) {
+    dbInstance.prepare(`
+      UPDATE orders 
+      SET reviewed_by = ?, reviewed_at = datetime('now'), admin_note = ?
+      WHERE id = ?
+    `).run(adminId, note || null, orderId);
+  }
+  return { success: true };
+}
+
+export function rejectManualOrder(orderId: string, adminId: string, reason?: string): { success: boolean; message?: string } {
+  const order = getOrder(orderId);
+  if (!order) return { success: false, message: "Buyurtma topilmadi." };
+  if (order.status === 'completed') return { success: false, message: "Bajarilgan buyurtmani rad etib bo'lmaydi." };
+
+  if (useJsonFallback || !dbInstance) {
+    if (memoryStore.orders[orderId]) {
+      memoryStore.orders[orderId].status = 'cancelled';
+      memoryStore.orders[orderId].admin_note = reason;
+      saveJsonStore();
+    }
+    return { success: true };
+  }
+  dbInstance.prepare(`
+    UPDATE orders 
+    SET status = 'cancelled', reviewed_by = ?, reviewed_at = datetime('now'), admin_note = ?
+    WHERE id = ?
+  `).run(adminId, reason || null, orderId);
+  return { success: true };
 }
 
 // Tarif darajasi (taqqoslash uchun)

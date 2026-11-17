@@ -7,8 +7,8 @@
 | **M0** | **Xavfsizlik va Poydevor (S1–S14)** | **Yakunlandi** | `v3/m0-security` |
 | **M1** | **Obuna Yadrosi & Entitlements Moduli** | **Yakunlandi** | `v3/m1-billing` |
 | **M2** | **Admin Panel v1** | **Yakunlandi** | `v3/m2-admin` |
-| **M3** | To'lovlar (Payme, Click, Telegram) | Navbatda | `v3/m3-payments` |
-| **M4** | Test Yaratish Yadrosi va Bot (grammY) | Kutilmoqda | `v3/m4-bot-creation` |
+| **M3** | **To'lovlar (Payme, Click, Telegram, Chek)** | **Yakunlandi** | `v3/m3-payments` |
+| **M4** | Test Yaratish Yadrosi va Bot (grammY) | Navbatda | `v3/m4-bot-creation` |
 | **M5** | Server Urinishlari & Natijalar Tahlili | Kutilmoqda | `v3/m5-attempts` |
 | **M6** | Kutubxona Moduli (Library) | Kutilmoqda | `v3/m6-library` |
 | **M7** | Veb va Mini App Sayqali | Kutilmoqda | `v3/m7-web-tma` |
@@ -60,5 +60,33 @@
 - [x] **Telegram Bot Admin Buyruqlari:** `/admin`, `/stats`, `/grant <userId> <plan> [kun]`, `/revoke <userId>` buyruqlari faqat `ADMIN_TELEGRAM_IDS` ro'yxatidagi adminlar uchun ishlaydi.
 - [x] **UI & Qoidalar:** `alert()` / `confirm()` o'rniga zamonaviy Glass modal komponentlari ishlatildi (Rule 8). Navbar da admin foydalanuvchiga maxsus "Admin Panel" tugmasi paydo bo'ladi.
 - [x] **Avtomatlashgan Testlar:** `tests/m2-admin.test.ts` da barcha rollar, admin statistikasi, qidiruv, obuna berish, bekor qilish va audit log tekshiruvlari 100% muvaffaqiyatli o'tdi.
+
+---
+
+## M3 — To'lovlar (Payme, Click, Telegram, Chek) Qabul Mezonlari Tekshiruvi
+
+- [x] **Click Shop API Integratsiyasi:**
+  - `POST /api/payments/click` va `prepare`, `complete` so'rovlari to'liq joriy etildi.
+  - MD5 imzo generatsiyasi va tekshiruvi (`click_trans_id + service_id + secret_key + merchant_trans_id + amount + action + sign_time`).
+  - Standart xato kodlari (0, -1, -2, -4, -5, -6, -7, -8, -9) va idempotent takroriy so'rovlar himoyasi.
+- [x] **Payme Merchant API Integratsiyasi:**
+  - `POST /api/payments/payme` JSON-RPC 2.0 protokoli.
+  - HTTP Basic Auth (`Paycom:PAYME_KEY`) tekshiruvi.
+  - Barcha talab qilingan metodlar: `CheckPerformTransaction`, `CreateTransaction`, `PerformTransaction`, `CancelTransaction`, `CheckTransaction`, `GetStatement`.
+  - Tiyin hisob-kitobi (1 so'm = 100 tiyin) va 12 soatlik tranzaksiya taym-auti.
+- [x] **Qo'lda To'lov (Bank Kartasi va Chek Yuklash):**
+  - Karta raqami va rekvizitlar (`MANUAL_PAYMENT_CONFIG`).
+  - Chek rasmini yuklash (`POST /api/orders/:id/proof`) va magic-bytes tekshiruvi (.jpg, .png, .webp).
+  - Telegram bot orqali adminga inline tugmalar (`[✅ Tasdiqlash]`, `[❌ Rad etish]`) bilan bir zumda bildirishnoma yuborish.
+  - Admin panel va botdan chekni tasdiqlash/rad etish oqimi.
+- [x] **Huquqiy Sahifalar (Legal Pages):**
+  - `/oferta` — Ommaviy oferta (rasmiy shartnoma).
+  - `/privacy` — Maxfiylik siyosati (shaxsiy ma'lumotlar xavfsizligi).
+  - `/refund` — To'lovni qaytarish siyosati (7 kunlik to'liq qaytarish kafolati).
+  - `/contacts` — Bog'lanish, qo'llab-quvvatlash va rekvizitlar.
+  - Barcha huquqiy sahifalar `Pricing.tsx` tagida va mustaqil URL larda barcha uchun ochiq.
+- [x] **Avtomatlashgan Testlar:**
+  - `tests/m3-payments.test.ts` da 8 ta unit va integratsiya testlari (Click imzo, Click prepare/complete, Payme auth, Payme RPC, Qo'lda to'lov tasdiqlash, to'lov URL generatsiyasi) 100% muvaffaqiyatli o'tdi.
+
 
 
