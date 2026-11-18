@@ -84,7 +84,22 @@ import {
   createLibraryFolder,
   getUserLibraryFolders,
   deleteLibraryFolder,
-  generateSlug
+  generateSlug,
+  banUser,
+  unbanUser,
+  bulkGrantSubscriptions,
+  createBroadcast,
+  getBroadcasts,
+  getReportedQuizzes,
+  resolveReport,
+  featureQuiz,
+  hideQuiz,
+  createPromoCode,
+  getPromoCodes,
+  validatePromoCode,
+  deletePromoCode,
+  exportUsersCsv,
+  exportQuizzesCsv
 } from './src/lib/db.ts';
 import { startTelegramBot, sendTelegramMessage } from './src/services/telegram-bot.ts';
 import { 
@@ -1993,6 +2008,204 @@ correctAnswer - bu to'g'ri javobning options massividagi 0 dan boshlanuvchi inde
         addAuditLog(req.user!.uid, 'send_message', 'user', req.params.id, { text });
       }
       res.json({ success: true, message: "Xabar yuborildi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ===================================================
+  // 7.10. ADMIN V2 — Ommaviy obuna (Bulk Grant)
+  // ===================================================
+  app.post('/api/admin/subscriptions/bulk', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { users, plan, durationDays, reason } = req.body;
+      if (!Array.isArray(users) || users.length === 0) {
+        return res.status(400).json({ error: "Foydalanuvchilar ro'yxati (users) talab qilinadi." });
+      }
+      if (!['start', 'pro', 'master'].includes(plan)) {
+        return res.status(400).json({ error: "Yaroqsiz tarif." });
+      }
+
+      const days = parseInt(durationDays) || 30;
+      const result = bulkGrantSubscriptions(users, plan, days, req.user!.uid, reason || 'Admin ommaviy obunasi');
+      res.json({ success: true, ...result });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.11. Foydalanuvchini bloklash / blokdan chiqarish (Ban / Unban)
+  app.post('/api/admin/users/:id/ban', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { reason } = req.body;
+      const success = banUser(req.params.id, reason || 'Qoidalarni buzganlik uchun', req.user!.uid);
+      res.json({ success, message: success ? "Foydalanuvchi bloklandi." : "Xatolik yuz berdi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/users/:id/unban', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const success = unbanUser(req.params.id, req.user!.uid);
+      res.json({ success, message: success ? "Foydalanuvchi blokdan chiqarildi." : "Xatolik yuz berdi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.12. Xabarnoma (Broadcasts)
+  app.get('/api/admin/broadcasts', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const broadcasts = getBroadcasts();
+      res.json({ success: true, broadcasts });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/broadcasts', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { message, segment } = req.body;
+      if (!message || !message.trim()) {
+        return res.status(400).json({ error: "Xabar matni talab qilinadi." });
+      }
+
+      const users = searchUsers('', 1000);
+      let targetUsers = users;
+
+      if (segment === 'pro') {
+        targetUsers = users.filter(u => u.subscription_plan === 'pro' || u.subscription_plan === 'master');
+      } else if (segment === 'free') {
+        targetUsers = users.filter(u => !u.subscription_plan || u.subscription_plan === 'free');
+      }
+
+      const bc = createBroadcast(req.user!.uid, message.trim(), segment || 'all', targetUsers.length);
+
+      // Agar bot token mavjud bo'lsa xabar yuborish
+      if (telegramBotToken && targetUsers.length > 0) {
+        // Fon rejimida yuborish
+        (async () => {
+          for (const u of targetUsers) {
+            try {
+              await sendTelegramMessage(telegramBotToken, u.id, escapeHtml(message.trim()));
+              await new Promise(r => setTimeout(r, 40)); // 25 msg/s Telegram rate limit
+            } catch (_) {}
+          }
+        })();
+      }
+
+      res.json({ success: true, broadcast: bc, sentCount: targetUsers.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.13. Moderatsiya va Shikoyatlar (Reports)
+  app.get('/api/admin/reports', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const reports = getReportedQuizzes();
+      res.json({ success: true, reports });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/reports/:id/resolve', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { action } = req.body; // 'dismiss' | 'hide' | 'delete'
+      if (!['dismiss', 'hide', 'delete'].includes(action)) {
+        return res.status(400).json({ error: "Noto'g'ri amal turi." });
+      }
+      const success = resolveReport(req.params.id, action, req.user!.uid);
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.14. Testni Tanlangan (Featured) qilish yoki Yashirish
+  app.post('/api/admin/quizzes/:id/feature', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { isFeatured } = req.body;
+      const success = featureQuiz(req.params.id, Boolean(isFeatured));
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/quizzes/:id/hide', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { isHidden } = req.body;
+      const success = hideQuiz(req.params.id, Boolean(isHidden));
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.15. Promokodlar boshqaruvi
+  app.get('/api/admin/promo-codes', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const promos = getPromoCodes();
+      res.json({ success: true, promos });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/admin/promo-codes', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const { code, type, value, planId, maxUses, expiresDays } = req.body;
+      if (!code || !type || value === undefined) {
+        return res.status(400).json({ error: "Kod, tur va qiymat talab qilinadi." });
+      }
+      const promo = createPromoCode(code, type, Number(value), planId, maxUses, expiresDays);
+      res.json({ success: true, promo });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/admin/promo-codes/:id', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const success = deletePromoCode(req.params.id);
+      res.json({ success });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7.16. Promokodni tekshirish (Foydalanuvchilar checkout paytida)
+  app.post('/api/promos/validate', optionalAuth, (req, res) => {
+    try {
+      const { code, planId } = req.body;
+      const check = validatePromoCode(code, planId);
+      res.json(check);
+    } catch (err: any) {
+      res.status(500).json({ valid: false, discountAmount: 0, message: err.message });
+    }
+  });
+
+  // 7.17. CSV Eksport
+  app.get('/api/admin/export/users.csv', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const csv = exportUsersCsv();
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="quizgen_users.csv"');
+      res.send(csv);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/admin/export/quizzes.csv', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const csv = exportQuizzesCsv();
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="quizgen_quizzes.csv"');
+      res.send(csv);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

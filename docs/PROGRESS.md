@@ -207,3 +207,35 @@
 - [x] **Avtomatlashgan Testlar:**
   - `tests/m7-web-tma.test.ts` da 4/4 test 100% muvaffaqiyatli o'tdi.
   - Barcha testlar to'plami: **49/49 test muvaffaqiyatli (M0–M7)**.
+
+
+---
+
+## M8 — Admin v2 va O'sish Moduli (TZ 10-bo'lim) Qabul Mezonlari Tekshiruvi
+
+- [x] **Kengaytirilgan Admin Panel v2 (`/admin`):**
+  - Zamonaviy 8 ta bo'limli boshqaruv markazi:
+    1. 📊 **Umumiy statistika (Dashboard):** Foydalanuvchilar soni, faol obunachilar, jami testlar, urinishlar, oylik tushum.
+    2. 👥 **Foydalanuvchilar (Users):** Qidiruv, rol va obuna bo'yicha saralash, bloklash/blokdan chiqarish (`ban`/`unban`), promouter/admin tayinlash, obuna berish.
+    3. 🛡️ **Moderatsiya (Reports):** Foydalanuvchilar shikoyat qilgan testlar navbati, sabablari, o'rganib chiqish, testni yashirish (`hide`), o'chirish (`delete`) yoki shikoyatni bekor qilish (`dismiss`).
+    4. 📢 **Xabarnomalar (Broadcasts):** Segmentlangan ommaviy xabarlar (Barchaga, Free, Start, Pro, Master), jo'natish holati va tarixi.
+    5. 🎟️ **Promokodlar (Promo Codes):** Yangi promokod yaratish (foiz, qat'iy summa, bepul kunlar, amal qilish muddati, limitlar), faollikni nazorat qilish va o'chirish.
+    6. ⚡ **Obunalar (Subscriptions):** Barcha faol va tugagan obunalar monitoringi, ommaviy obuna berish (`Bulk Grant`).
+    7. 💳 **Buyurtmalar (Orders):** Payme, Click va qo'lda kassa cheklari tushumlari.
+    8. 📝 **Audit jurnali (Audit Logs):** Barcha admin harakatlari qat'iy ro'yxatga olinadi.
+- [x] **Ommaviy Obuna Berish (Bulk Grant):**
+  - Bir vaqtning o'zida o'nlab/yuzlab foydalanuvchiga (ID yoki username ro'yxati bo'yicha) tarif va muddat berish (`bulkGrantSubscriptions`).
+  - Natija hisoboti: muvaffaqiyatli berilganlar va xato bo'lganlar ro'yxati.
+- [x] **Foydalanuvchilarni Bloklash va Xavfsizlik:**
+  - `banUser` va `unbanUser` funksiyalari va sababni ko'rsatish (`ban_reason`).
+  - Bloklangan foydalanuvchilar kirish huquqidan mahrum qilinadi.
+- [x] **Eksport (CSV / Data Portability):**
+  - Foydalanuvchilar ro'yxati (`/api/admin/export/users.csv`) RFC 4180 formatida yuklab olinadi.
+  - Testlar ro'yxati (`/api/admin/export/quizzes.csv`) yuklab olinadi.
+- [x] **Telegram Bot Admin Buyruqlari:**
+  - `/pending` — kutilayotgan qo'lda to'lov cheklarini ko'rish va inline tugmalar bilan tasdiqlash/rad etish.
+  - `/user <id|username>` — foydalanuvchi profilingizni, obunasi va statistikasini bot orqali tezkor tekshirish.
+  - `/broadcast <xabar>` — bot admini orqali tezkor ommaviy xabarnoma yuborish.
+- [x] **Avtomatlashgan Testlar:**
+  - `tests/m8-admin-v2.test.ts` da 6/6 test 100% muvaffaqiyatli o'tdi.
+  - Barcha testlar to'plami: **55/55 test muvaffaqiyatli (M0–M8)**.

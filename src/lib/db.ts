@@ -372,6 +372,32 @@ export function initDatabase() {
         status TEXT NOT NULL DEFAULT 'prepare',
         created_at TEXT DEFAULT (datetime('now'))
       );
+
+      CREATE TABLE IF NOT EXISTS broadcasts (
+        id TEXT PRIMARY KEY,
+        admin_id TEXT NOT NULL,
+        message TEXT NOT NULL,
+        segment TEXT NOT NULL DEFAULT 'all',
+        status TEXT NOT NULL DEFAULT 'completed',
+        total_count INTEGER NOT NULL DEFAULT 0,
+        sent_count INTEGER NOT NULL DEFAULT 0,
+        failed_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        completed_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS promo_codes (
+        id TEXT PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        type TEXT NOT NULL DEFAULT 'percent',
+        value REAL NOT NULL DEFAULT 10,
+        plan_id TEXT DEFAULT NULL,
+        max_uses INTEGER NOT NULL DEFAULT 100,
+        current_uses INTEGER NOT NULL DEFAULT 0,
+        expires_at INTEGER DEFAULT 0,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
     `);
 
     // Foydalanuvchilar jadvaliga obuna ustunlarini qo'shish (agar bo'lmasa)
@@ -379,7 +405,9 @@ export function initDatabase() {
       'subscription_plan TEXT DEFAULT "free"',
       'subscription_expires_at INTEGER DEFAULT 0',
       'ai_tests_today INTEGER DEFAULT 0',
-      'last_ai_date TEXT DEFAULT ""'
+      'last_ai_date TEXT DEFAULT ""',
+      'is_banned INTEGER DEFAULT 0',
+      'ban_reason TEXT DEFAULT NULL'
     ];
     for (const col of userCols) {
       try {
@@ -574,9 +602,9 @@ export function createQuiz(quiz: QuizRecord, questions: QuestionRecord[]): QuizR
     insertQuestion.run(
       qId,
       quizId,
-      q.question,
-      JSON.stringify(q.options),
-      q.correctAnswer,
+      q.question || (q as any).question_text || '',
+      JSON.stringify(q.options || []),
+      q.correctAnswer !== undefined ? q.correctAnswer : ((q as any).correct_answer ?? 0),
       q.explanation || null,
       idx
     );
@@ -2192,3 +2220,246 @@ export function getAllOrders(status = '', limit = 50, offset = 0) {
   }
 }
 
+
+// ===================================================
+// 8. ADMIN V2 FUNKSIYALARI (M8)
+// ===================================================
+
+export function banUser(userId: string, reason: string, adminId: string): boolean {
+  if (!dbInstance) return false;
+  try {
+    dbInstance.prepare('UPDATE users SET is_banned = 1, ban_reason = ? WHERE id = ?').run(reason, userId);
+    addAuditLog(adminId, 'ban_user', 'user', userId, { reason });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function unbanUser(userId: string, adminId: string): boolean {
+  if (!dbInstance) return false;
+  try {
+    dbInstance.prepare('UPDATE users SET is_banned = 0, ban_reason = NULL WHERE id = ?').run(userId);
+    addAuditLog(adminId, 'unban_user', 'user', userId, {});
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function bulkGrantSubscriptions(
+  userIdsOrUsernames: string[],
+  plan: 'start' | 'pro' | 'master',
+  durationDays: number,
+  adminId: string,
+  reason: string
+): { successCount: number; failureCount: number; results: any[] } {
+  if (!dbInstance) return { successCount: 0, failureCount: 0, results: [] };
+
+  const results: any[] = [];
+  let successCount = 0;
+  let failureCount = 0;
+
+  for (let raw of userIdsOrUsernames) {
+    const term = raw.trim().replace(/^@/, '');
+    if (!term) continue;
+
+    // User ID yoki username orqali topamiz
+    const userRow = dbInstance.prepare(`
+      SELECT id, first_name, username FROM users 
+      WHERE id = ? OR username = ?
+    `).get(term, term) as any;
+
+    if (userRow) {
+      updateUserSubscription(userRow.id, plan, durationDays);
+      addAuditLog(adminId, 'bulk_grant', 'user', userRow.id, { plan, durationDays, reason });
+      results.push({ id: userRow.id, username: userRow.username, success: true });
+      successCount++;
+    } else {
+      results.push({ identifier: term, success: false, message: 'Foydalanuvchi topilmadi' });
+      failureCount++;
+    }
+  }
+
+  return { successCount, failureCount, results };
+}
+
+export function createBroadcast(adminId: string, message: string, segment = 'all', totalCount = 0): any {
+  if (!dbInstance) return { id: generateId(), message, segment };
+  const id = generateId();
+  dbInstance.prepare(`
+    INSERT INTO broadcasts (id, admin_id, message, segment, status, total_count, sent_count, failed_count, created_at, completed_at)
+    VALUES (?, ?, ?, ?, 'completed', ?, ?, 0, datetime('now'), datetime('now'))
+  `).run(id, adminId, message, segment, totalCount, totalCount);
+  addAuditLog(adminId, 'broadcast_create', 'broadcast', id, { segment, totalCount });
+  return { id, admin_id: adminId, message, segment, total_count: totalCount, sent_count: totalCount };
+}
+
+export function getBroadcasts(limit = 20): any[] {
+  if (!dbInstance) return [];
+  try {
+    return dbInstance.prepare('SELECT * FROM broadcasts ORDER BY created_at DESC LIMIT ?').all(limit);
+  } catch {
+    return [];
+  }
+}
+
+export function getReportedQuizzes(limit = 50, offset = 0): any[] {
+  if (!dbInstance) return [];
+  try {
+    const sql = `
+      SELECT r.id as report_id, r.quiz_id, r.reporter_id, r.reason, r.status as report_status, r.created_at as reported_at,
+             q.title as quiz_title, q.status as quiz_status, q.visibility, q.user_id as author_id,
+             u.first_name as author_name, u.username as author_username
+      FROM quiz_reports r
+      LEFT JOIN quizzes q ON r.quiz_id = q.id
+      LEFT JOIN users u ON q.user_id = u.id
+      ORDER BY r.created_at DESC
+      LIMIT ? OFFSET ?
+    `;
+    return dbInstance.prepare(sql).all(limit, offset);
+  } catch {
+    return [];
+  }
+}
+
+export function resolveReport(reportId: string, action: 'dismiss' | 'hide' | 'delete', adminId = 'admin'): boolean {
+  if (!dbInstance) return true;
+  try {
+    const report = dbInstance.prepare('SELECT * FROM quiz_reports WHERE id = ?').get(reportId) as any;
+    if (!report) return false;
+
+    if (action === 'dismiss') {
+      dbInstance.prepare("UPDATE quiz_reports SET status = 'resolved' WHERE id = ?").run(reportId);
+    } else if (action === 'hide') {
+      dbInstance.prepare("UPDATE quiz_reports SET status = 'resolved' WHERE id = ?").run(reportId);
+      dbInstance.prepare("UPDATE quizzes SET status = 'hidden_by_admin' WHERE id = ?").run(report.quiz_id);
+    } else if (action === 'delete') {
+      dbInstance.prepare("UPDATE quiz_reports SET status = 'resolved' WHERE id = ?").run(reportId);
+      dbInstance.prepare("DELETE FROM quizzes WHERE id = ?").run(report.quiz_id);
+    }
+
+    addAuditLog(adminId, `resolve_report_${action}`, 'quiz_report', reportId, { quiz_id: report.quiz_id });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function featureQuiz(quizId: string, isFeatured: boolean): boolean {
+  if (!dbInstance) return true;
+  try {
+    dbInstance.prepare('UPDATE quizzes SET is_featured = ? WHERE id = ?').run(isFeatured ? 1 : 0, quizId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function hideQuiz(quizId: string, isHidden: boolean): boolean {
+  if (!dbInstance) return true;
+  try {
+    const status = isHidden ? 'hidden_by_admin' : 'published';
+    dbInstance.prepare('UPDATE quizzes SET status = ? WHERE id = ?').run(status, quizId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function createPromoCode(
+  code: string,
+  type: 'percent' | 'fixed' | 'free_days',
+  value: number,
+  planId?: string,
+  maxUses = 100,
+  expiresDays = 30
+): any {
+  if (!dbInstance) return { id: generateId(), code, type, value };
+  const id = generateId();
+  const cleanCode = code.trim().toUpperCase();
+  const expiresAt = Date.now() + (expiresDays * 24 * 60 * 60 * 1000);
+  dbInstance.prepare(`
+    INSERT OR REPLACE INTO promo_codes (id, code, type, value, plan_id, max_uses, current_uses, expires_at, is_active, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, 0, ?, 1, datetime('now'))
+  `).run(id, cleanCode, type, value, planId || null, maxUses, expiresAt);
+  return { id, code: cleanCode, type, value, plan_id: planId, max_uses: maxUses, expires_at: expiresAt };
+}
+
+export function getPromoCodes(): any[] {
+  if (!dbInstance) return [];
+  try {
+    return dbInstance.prepare('SELECT * FROM promo_codes ORDER BY created_at DESC').all();
+  } catch {
+    return [];
+  }
+}
+
+export function validatePromoCode(code: string, planId: string): {
+  valid: boolean;
+  discountAmount: number;
+  freeDays?: number;
+  promo?: any;
+  message?: string;
+} {
+  if (!dbInstance) return { valid: false, discountAmount: 0, message: "Promokod topilmadi" };
+  const clean = (code || '').trim().toUpperCase();
+  const promo = dbInstance.prepare('SELECT * FROM promo_codes WHERE code = ? AND is_active = 1').get(clean) as any;
+  if (!promo) {
+    return { valid: false, discountAmount: 0, message: "Yaroqsiz promokod" };
+  }
+  if (promo.expires_at > 0 && promo.expires_at < Date.now()) {
+    return { valid: false, discountAmount: 0, message: "Promokod muddati tugagan" };
+  }
+  if (promo.max_uses > 0 && promo.current_uses >= promo.max_uses) {
+    return { valid: false, discountAmount: 0, message: "Promokod limiti to'lgan" };
+  }
+  if (promo.plan_id && promo.plan_id !== planId) {
+    return { valid: false, discountAmount: 0, message: `Ushbu promokod faqat ${promo.plan_id} tarifi uchun amal qiladi` };
+  }
+
+  const plan = (PRICING_PLANS as any)[planId];
+  const planPrice = plan?.price || 0;
+  let discountAmount = 0;
+  let freeDays = 0;
+
+  if (promo.type === 'percent') {
+    discountAmount = Math.round((planPrice * promo.value) / 100);
+  } else if (promo.type === 'fixed') {
+    discountAmount = Math.min(planPrice, promo.value);
+  } else if (promo.type === 'free_days') {
+    freeDays = promo.value;
+  }
+
+  return { valid: true, discountAmount, freeDays, promo };
+}
+
+export function deletePromoCode(id: string): boolean {
+  if (!dbInstance) return true;
+  try {
+    const res = dbInstance.prepare('DELETE FROM promo_codes WHERE id = ?').run(id);
+    return res.changes > 0;
+  } catch {
+    return false;
+  }
+}
+
+export function exportUsersCsv(): string {
+  if (!dbInstance) return "id,first_name,username,role,subscription_plan,created_at\n";
+  const users = dbInstance.prepare('SELECT id, first_name, username, role, subscription_plan, created_at FROM users').all() as any[];
+  const header = "id,first_name,username,role,subscription_plan,created_at\n";
+  const rows = users.map(u => 
+    `"${u.id}","${(u.first_name || '').replace(/"/g, '""')}","${(u.username || '').replace(/"/g, '""')}","${u.role}","${u.subscription_plan || 'free'}","${u.created_at}"`
+  ).join("\n");
+  return header + rows;
+}
+
+export function exportQuizzesCsv(): string {
+  if (!dbInstance) return "id,title,category,total_questions,visibility,status,views_count,created_at\n";
+  const quizzes = dbInstance.prepare('SELECT id, title, category, total_questions, visibility, status, views_count, created_at FROM quizzes').all() as any[];
+  const header = "id,title,category,total_questions,visibility,status,views_count,created_at\n";
+  const rows = quizzes.map(q => 
+    `"${q.id}","${(q.title || '').replace(/"/g, '""')}","${q.category || 'Umumiy'}",${q.total_questions || 0},"${q.visibility || 'public'}","${q.status || 'published'}",${q.views_count || 0},"${q.created_at}"`
+  ).join("\n");
+  return header + rows;
+}

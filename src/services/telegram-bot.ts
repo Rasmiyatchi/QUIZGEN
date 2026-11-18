@@ -18,7 +18,10 @@ import {
   cancelUserSubscription,
   searchPublicQuizzes,
   getQuizBySlug,
-  getQuiz
+  getQuiz,
+  getAllOrders,
+  searchUsers,
+  getUser
 } from '../lib/db.ts';
 import { escapeHtml, generateId } from '../lib/security.ts';
 import { getEffectiveEntitlements, activateSubscription, clearEntitlementsCache } from '../lib/entitlements.ts';
@@ -601,14 +604,72 @@ async function handleBotMessage(botToken: string, appUrl: string, msg: any) {
         `Siz tizim administratori sifatida tanildingiz.\n\n` +
         `Mavjud buyruqlar:\n` +
         `• /stats — Umumiy platforma statistikasi\n` +
+        `• /pending — Kutilayotgan to'lovlar navbati\n` +
+        `• /user &lt;id|username&gt; — Foydalanuvchi qidirish\n` +
         `• /grant &lt;userId&gt; &lt;start|pro|master&gt; [kun] — Obuna berish\n` +
-        `• /revoke &lt;userId&gt; — Obunani bekor qilish`;
+        `• /revoke &lt;userId&gt; — Obunani bekor qilish\n` +
+        `• /broadcast &lt;xabar&gt; — Barcha foydalanuvchilarga xabar yuborish`;
       return sendTelegramMessage(botToken, chatId, adminText, {
         inline_keyboard: [
           [{ text: "📊 Statistikani ko'rish", callback_data: "admin_stats" }],
           [{ text: "🌐 Veb Admin Panel", url: `${appUrl}/admin` }]
         ]
       });
+    }
+
+    if (rawText === '/pending') {
+      const orders = getAllOrders('pending', 10);
+      if (orders.length === 0) {
+        return sendTelegramMessage(botToken, chatId, "✅ Kutilayotgan to'lovlar mavjud emas.");
+      }
+      for (const ord of orders) {
+        const msgText = `📦 <b>Buyurtma:</b> <code>${ord.id}</code>\n` +
+          `👤 Foydalanuvchi: <b>${escapeHtml(ord.first_name || ord.user_id)}</b> (@${ord.username || 'yo\'q'})\n` +
+          `💰 Summa: <b>${ord.amount.toLocaleString()} so'm</b>\n` +
+          `💎 Tarif: <b>${ord.plan}</b>\n` +
+          `🕒 Vaqti: ${ord.created_at}`;
+        await sendTelegramMessage(botToken, chatId, msgText, {
+          inline_keyboard: [
+            [
+              { text: "✅ Tasdiqlash", callback_data: `approve_order_${ord.id}` },
+              { text: "❌ Rad etish", callback_data: `reject_order_${ord.id}` }
+            ]
+          ]
+        });
+      }
+      return;
+    }
+
+    if (rawText.startsWith('/user')) {
+      const term = rawText.replace('/user', '').trim();
+      if (!term) return sendTelegramMessage(botToken, chatId, "⚠️ Format: <code>/user 123456789</code> yoki <code>/user username</code>");
+      const found = getUser(term) || (searchUsers(term, 1)[0]);
+      if (!found) return sendTelegramMessage(botToken, chatId, "❌ Foydalanuvchi topilmadi.");
+      const uMsg = `👤 <b>Foydalanuvchi ma'lumotlari:</b>\n\n` +
+        `Ism: <b>${escapeHtml(found.first_name)}</b>\n` +
+        `Username: @${found.username || 'yo\'q'}\n` +
+        `Telegram ID: <code>${found.id}</code>\n` +
+        `Tarif: <b>${found.subscription_plan || 'free'}</b>\n` +
+        `Seriya (Streak): <b>${found.streak_days || 0} kun</b>\n` +
+        `XP: <b>${found.xp || 0}</b>\n` +
+        `Holati: <b>${found.is_banned ? '🚫 Bloklangan' : '✅ Faol'}</b>`;
+      return sendTelegramMessage(botToken, chatId, uMsg);
+    }
+
+    if (rawText.startsWith('/broadcast')) {
+      const bText = rawText.replace('/broadcast', '').trim();
+      if (!bText) return sendTelegramMessage(botToken, chatId, "⚠️ Format: <code>/broadcast Xabar matni...</code>");
+      const allUsers = searchUsers('', 1000);
+      let sent = 0;
+      for (const u of allUsers) {
+        try {
+          await sendTelegramMessage(botToken, u.id, escapeHtml(bText));
+          sent++;
+          await new Promise(r => setTimeout(r, 40));
+        } catch (_) {}
+      }
+      addAuditLog(String(user?.id || chatId), 'broadcast_via_bot', 'broadcast', 'all', { count: sent });
+      return sendTelegramMessage(botToken, chatId, `📢 <b>Xabarnoma yuborildi!</b>\nJami: <b>${sent} ta</b> foydalanuvchiga yetkazildi.`);
     }
 
     if (rawText === '/stats') {

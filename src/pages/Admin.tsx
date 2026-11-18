@@ -4,15 +4,18 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Users, Crown, ShieldAlert, DollarSign, BookOpen, Award, 
   Search, Plus, CheckCircle2, XCircle, Clock, RefreshCw, 
-  Send, AlertTriangle, ArrowRight, Eye, ShieldCheck, FileText, Ban
+  Send, AlertTriangle, ArrowRight, Eye, ShieldCheck, FileText, Ban,
+  Radio, Tag, Download, Trash2, Flag, UserCheck, Megaphone, Check
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+
+type AdminTab = 'dashboard' | 'users' | 'moderation' | 'broadcast' | 'promos' | 'subscriptions' | 'orders' | 'audit';
 
 export default function Admin() {
   const { user, authFetch } = useAuth();
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'users' | 'subscriptions' | 'orders' | 'audit'>('dashboard');
+  const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [stats, setStats] = useState<any>(null);
   const [loadingStats, setLoadingStats] = useState(true);
 
@@ -21,17 +24,49 @@ export default function Admin() {
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(false);
 
-  // Obuna berish modali holati
+  // Obuna berish modali
   const [selectedUserForGrant, setSelectedUserForGrant] = useState<any>(null);
   const [grantPlan, setGrantPlan] = useState<'start' | 'pro' | 'master'>('pro');
   const [grantDays, setGrantDays] = useState(30);
   const [grantReason, setGrantReason] = useState('Admin tomonidan taqdim etildi');
   const [notifyUser, setNotifyUser] = useState(true);
   const [grantLoading, setGrantLoading] = useState(false);
-  const [actionSuccessMsg, setActionSuccessMsg] = useState('');
-  const [actionErrorMsg, setActionErrorMsg] = useState('');
 
-  // Obunalar va Buyurtmalar ro'yxati
+  // Ommaviy obuna (Bulk Grant) modali
+  const [showBulkModal, setShowBulkModal] = useState(false);
+  const [bulkUsersText, setBulkUsersText] = useState('');
+  const [bulkPlan, setBulkPlan] = useState<'start' | 'pro' | 'master'>('pro');
+  const [bulkDays, setBulkDays] = useState(30);
+  const [bulkReason, setBulkReason] = useState('Universitet/guruh uchun ommaviy obuna');
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkResult, setBulkResult] = useState<any>(null);
+
+  // Ban/Unban modali
+  const [banUserTarget, setBanUserTarget] = useState<any>(null);
+  const [banReason, setBanReason] = useState('Qoidalarni buzganlik uchun');
+  const [banLoading, setBanLoading] = useState(false);
+
+  // Moderatsiya (Reports) holati
+  const [reportsList, setReportsList] = useState<any[]>([]);
+  const [loadingReports, setLoadingReports] = useState(false);
+
+  // Xabarnoma (Broadcasts) holati
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastSegment, setBroadcastSegment] = useState<'all' | 'pro' | 'free'>('all');
+  const [broadcastsHistory, setBroadcastsHistory] = useState<any[]>([]);
+  const [sendingBroadcast, setSendingBroadcast] = useState(false);
+
+  // Promokodlar holati
+  const [promoCodesList, setPromoCodesList] = useState<any[]>([]);
+  const [newPromoCode, setNewPromoCode] = useState('');
+  const [newPromoType, setNewPromoType] = useState<'percent' | 'fixed' | 'free_days'>('percent');
+  const [newPromoValue, setNewPromoValue] = useState<number>(20);
+  const [newPromoPlan, setNewPromoPlan] = useState('');
+  const [newPromoMaxUses, setNewPromoMaxUses] = useState<number>(100);
+  const [newPromoDays, setNewPromoDays] = useState<number>(30);
+  const [showPromoModal, setShowPromoModal] = useState(false);
+
+  // Obunalar, Buyurtmalar va Audit ro'yxati
   const [subscriptionsList, setSubscriptionsList] = useState<any[]>([]);
   const [ordersList, setOrdersList] = useState<any[]>([]);
   const [auditLogsList, setAuditLogsList] = useState<any[]>([]);
@@ -40,6 +75,10 @@ export default function Admin() {
   // Obuna bekor qilish tasdiqlash modali
   const [confirmCancelUser, setConfirmCancelUser] = useState<{ id: string; name: string } | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
+
+  // Bildirishnomalar
+  const [actionSuccessMsg, setActionSuccessMsg] = useState('');
+  const [actionErrorMsg, setActionErrorMsg] = useState('');
 
   // Ruxsat tekshiruvi: faqat admin va superadmin
   const isAdmin = user?.role === 'admin' || user?.role === 'superadmin';
@@ -52,6 +91,9 @@ export default function Admin() {
   useEffect(() => {
     if (!isAdmin) return;
     if (activeTab === 'users') loadUsers();
+    if (activeTab === 'moderation') loadReports();
+    if (activeTab === 'broadcast') loadBroadcasts();
+    if (activeTab === 'promos') loadPromos();
     if (activeTab === 'subscriptions') loadSubscriptions();
     if (activeTab === 'orders') loadOrders();
     if (activeTab === 'audit') loadAuditLogs();
@@ -84,6 +126,45 @@ export default function Admin() {
       console.error(err);
     } finally {
       setLoadingUsers(false);
+    }
+  };
+
+  const loadReports = async () => {
+    setLoadingReports(true);
+    try {
+      const res = await authFetch('/api/admin/reports');
+      if (res.ok) {
+        const data = await res.json();
+        setReportsList(data.reports || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingReports(false);
+    }
+  };
+
+  const loadBroadcasts = async () => {
+    try {
+      const res = await authFetch('/api/admin/broadcasts');
+      if (res.ok) {
+        const data = await res.json();
+        setBroadcastsHistory(data.broadcasts || []);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const loadPromos = async () => {
+    try {
+      const res = await authFetch('/api/admin/promo-codes');
+      if (res.ok) {
+        const data = await res.json();
+        setPromoCodesList(data.promos || []);
+      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
@@ -132,6 +213,7 @@ export default function Admin() {
     }
   };
 
+  // Obuna berish
   const handleGrantSubscription = async () => {
     if (!selectedUserForGrant) return;
     setGrantLoading(true);
@@ -141,6 +223,7 @@ export default function Admin() {
     try {
       const res = await authFetch(`/api/admin/users/${selectedUserForGrant.id}/subscription`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           plan: grantPlan,
           durationDays: grantDays,
@@ -152,7 +235,7 @@ export default function Admin() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Obuna berishda xatolik");
 
-      setActionSuccessMsg(`Foydalanuvchi ${selectedUserForGrant.first_name} ga ${grantPlan.toUpperCase()} tarifi (${grantDays} kun) muvaffaqiyatli berildi!`);
+      setActionSuccessMsg(`Foydalanuvchi ${selectedUserForGrant.first_name} ga ${grantPlan.toUpperCase()} tarifi (${grantDays} kun) berildi!`);
       setSelectedUserForGrant(null);
       loadUsers();
       loadStats();
@@ -163,30 +246,169 @@ export default function Admin() {
     }
   };
 
-  const executeCancelSubscription = async () => {
-    if (!confirmCancelUser) return;
-    setCancelLoading(true);
+  // Ommaviy obuna (Bulk Grant)
+  const handleBulkGrant = async () => {
+    const rawList = bulkUsersText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    if (rawList.length === 0) {
+      setActionErrorMsg("Kamida bitta foydalanuvchi kiriting.");
+      return;
+    }
+
+    setBulkLoading(true);
     setActionSuccessMsg('');
     setActionErrorMsg('');
     try {
-      const res = await authFetch(`/api/admin/users/${confirmCancelUser.id}/cancel-subscription`, {
+      const res = await authFetch('/api/admin/subscriptions/bulk', {
         method: 'POST',
-        body: JSON.stringify({ reason: 'Admin tomonidan bekor qilindi' })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          users: rawList,
+          plan: bulkPlan,
+          durationDays: bulkDays,
+          reason: bulkReason
+        })
       });
-      if (res.ok) {
-        setActionSuccessMsg(`${confirmCancelUser.name} ning obunasi bekor qilindi.`);
-        setConfirmCancelUser(null);
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setBulkResult(data);
+        setActionSuccessMsg(`Ommaviy obuna: ${data.successCount} ta foydalanuvchiga muvaffaqiyatli berildi!`);
         loadUsers();
         loadStats();
       } else {
-        const data = await res.json();
-        setActionErrorMsg(data.error || "Obunani bekor qilishda xatolik");
+        setActionErrorMsg(data.error || "Ommaviy obuna xatosi");
       }
     } catch (err: any) {
       setActionErrorMsg(err.message);
     } finally {
-      setCancelLoading(false);
+      setBulkLoading(false);
     }
+  };
+
+  // Foydalanuvchini bloklash / blokdan chiqarish
+  const handleBanSubmit = async () => {
+    if (!banUserTarget) return;
+    setBanLoading(true);
+    try {
+      const isAlreadyBanned = Boolean(banUserTarget.is_banned);
+      const endpoint = isAlreadyBanned ? `/api/admin/users/${banUserTarget.id}/unban` : `/api/admin/users/${banUserTarget.id}/ban`;
+      const res = await authFetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: banReason })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionSuccessMsg(isAlreadyBanned ? "Foydalanuvchi blokdan chiqarildi." : "Foydalanuvchi bloklandi.");
+        setBanUserTarget(null);
+        loadUsers();
+      } else {
+        setActionErrorMsg(data.error || "Amalni bajarib bo'lmadi.");
+      }
+    } catch (err: any) {
+      setActionErrorMsg(err.message);
+    } finally {
+      setBanLoading(false);
+    }
+  };
+
+  // Moderatsiya shikoyatini hal qilish
+  const handleResolveReport = async (reportId: string, action: 'dismiss' | 'hide' | 'delete') => {
+    try {
+      const res = await authFetch(`/api/admin/reports/${reportId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      });
+      if (res.ok) {
+        setActionSuccessMsg(`Shikoyat ko'rib chiqildi (${action}).`);
+        loadReports();
+      }
+    } catch (err: any) {
+      setActionErrorMsg(err.message);
+    }
+  };
+
+  // Xabarnoma yuborish
+  const handleSendBroadcast = async () => {
+    if (!broadcastMessage.trim()) return;
+    setSendingBroadcast(true);
+    setActionSuccessMsg('');
+    setActionErrorMsg('');
+    try {
+      const res = await authFetch('/api/admin/broadcasts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: broadcastMessage.trim(),
+          segment: broadcastSegment
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionSuccessMsg(`Xabarnoma yuborildi! Jami ${data.sentCount} ta foydalanuvchiga navbatga qo'yildi.`);
+        setBroadcastMessage('');
+        loadBroadcasts();
+      } else {
+        setActionErrorMsg(data.error || "Xabarnoma yuborishda xatolik.");
+      }
+    } catch (err: any) {
+      setActionErrorMsg(err.message);
+    } finally {
+      setSendingBroadcast(false);
+    }
+  };
+
+  // Promokod yaratish
+  const handleCreatePromo = async () => {
+    if (!newPromoCode.trim()) return;
+    try {
+      const res = await authFetch('/api/admin/promo-codes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code: newPromoCode.trim(),
+          type: newPromoType,
+          value: newPromoValue,
+          planId: newPromoPlan || undefined,
+          maxUses: newPromoMaxUses,
+          expiresDays: newPromoDays
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setActionSuccessMsg(`Promokod ${data.promo.code} yaratildi!`);
+        setShowPromoModal(false);
+        setNewPromoCode('');
+        loadPromos();
+      } else {
+        setActionErrorMsg(data.error || "Promokod yaratib bo'lmadi.");
+      }
+    } catch (err: any) {
+      setActionErrorMsg(err.message);
+    }
+  };
+
+  // Promokod o'chirish
+  const handleDeletePromo = async (id: string) => {
+    try {
+      const res = await authFetch(`/api/admin/promo-codes/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setActionSuccessMsg("Promokod o'chirildi.");
+        loadPromos();
+      }
+    } catch (err: any) {
+      setActionErrorMsg(err.message);
+    }
+  };
+
+  // CSV yuklab olish
+  const downloadCsv = (path: string, filename: string) => {
+    const link = document.createElement('a');
+    link.href = path;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   if (!isAdmin) {
@@ -211,30 +433,53 @@ export default function Admin() {
 
   return (
     <div className="min-h-screen text-slate-100 mesh-gradient-bg py-6 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto space-y-6">
         
-        {/* Header */}
-        <div className="flex items-center justify-between gap-4 mb-8 flex-wrap">
+        {/* Yuqori Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 mb-1">
               <span className="px-2.5 py-0.5 rounded-full bg-red-500/20 text-red-300 text-[10px] font-black uppercase tracking-wider border border-red-500/30">
-                ADMINISTRATION
+                ADMINISTRATION v2
               </span>
-              <span className="text-xs text-slate-400 font-bold">QUIZGEN v3</span>
+              <span className="text-xs text-slate-400 font-bold">QUIZGEN Platformasi</span>
             </div>
-            <h1 className="text-2xl sm:text-3xl font-black text-white">Boshqaruv Paneli</h1>
+            <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
+              Boshqaruv va Moderatsiya Markazi
+            </h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => downloadCsv('/api/admin/export/users.csv', 'users.csv')}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold text-slate-300 transition-all"
+              title="Foydalanuvchilar bazasini CSV yuklash"
+            >
+              <Download className="w-3.5 h-3.5 text-blue-400" />
+              <span>Users CSV</span>
+            </button>
+
+            <button
+              onClick={() => downloadCsv('/api/admin/export/quizzes.csv', 'quizzes.csv')}
+              className="flex items-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold text-slate-300 transition-all"
+              title="Testlar bazasini CSV yuklash"
+            >
+              <Download className="w-3.5 h-3.5 text-purple-400" />
+              <span>Quizzes CSV</span>
+            </button>
+
             <button
               onClick={() => {
                 loadStats();
                 if (activeTab === 'users') loadUsers();
+                if (activeTab === 'moderation') loadReports();
+                if (activeTab === 'broadcast') loadBroadcasts();
+                if (activeTab === 'promos') loadPromos();
                 if (activeTab === 'subscriptions') loadSubscriptions();
                 if (activeTab === 'orders') loadOrders();
                 if (activeTab === 'audit') loadAuditLogs();
               }}
-              className="flex items-center gap-1.5 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold text-slate-300 transition-all"
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold text-slate-300 transition-all"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>Yangilash</span>
@@ -244,509 +489,773 @@ export default function Admin() {
 
         {/* Action alerts */}
         {actionSuccessMsg && (
-          <div className="mb-6 p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-between">
+          <div className="p-4 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center justify-between">
             <span>{actionSuccessMsg}</span>
             <button onClick={() => setActionSuccessMsg('')}>✕</button>
           </div>
         )}
         {actionErrorMsg && (
-          <div className="mb-6 p-4 rounded-2xl bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold flex items-center justify-between">
+          <div className="p-4 rounded-2xl bg-red-500/20 border border-red-500/40 text-red-300 text-xs font-bold flex items-center justify-between">
             <span>{actionErrorMsg}</span>
             <button onClick={() => setActionErrorMsg('')}>✕</button>
           </div>
         )}
 
         {/* Navigation Tabs */}
-        <div className="flex items-center gap-2 p-1 bg-white/5 border border-white/10 rounded-2xl mb-8 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1.5 p-1 bg-white/5 border border-white/10 rounded-2xl overflow-x-auto no-scrollbar">
           <button
             onClick={() => setActiveTab('dashboard')}
             className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap",
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap",
               activeTab === 'dashboard' ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30" : "text-slate-400 hover:text-white"
             )}
           >
-            <Award className="w-4 h-4" /> Dashboard
+            <Award className="w-4 h-4" /> <span>Dashboard</span>
           </button>
+
           <button
             onClick={() => setActiveTab('users')}
             className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap",
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap",
               activeTab === 'users' ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30" : "text-slate-400 hover:text-white"
             )}
           >
-            <Users className="w-4 h-4" /> Foydalanuvchilar
+            <Users className="w-4 h-4" /> <span>Foydalanuvchilar</span>
           </button>
+
+          <button
+            onClick={() => setActiveTab('moderation')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap",
+              activeTab === 'moderation' ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30" : "text-slate-400 hover:text-white"
+            )}
+          >
+            <Flag className="w-4 h-4" /> <span>Moderatsiya</span>
+            {reportsList.filter(r => r.report_status === 'pending').length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white text-[9px]">
+                {reportsList.filter(r => r.report_status === 'pending').length}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('broadcast')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap",
+              activeTab === 'broadcast' ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30" : "text-slate-400 hover:text-white"
+            )}
+          >
+            <Megaphone className="w-4 h-4" /> <span>Xabarnoma</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('promos')}
+            className={cn(
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap",
+              activeTab === 'promos' ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30" : "text-slate-400 hover:text-white"
+            )}
+          >
+            <Tag className="w-4 h-4" /> <span>Promokodlar</span>
+          </button>
+
           <button
             onClick={() => setActiveTab('subscriptions')}
             className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap",
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap",
               activeTab === 'subscriptions' ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30" : "text-slate-400 hover:text-white"
             )}
           >
-            <Crown className="w-4 h-4" /> Obunalar
+            <Crown className="w-4 h-4" /> <span>Obunalar</span>
           </button>
+
           <button
             onClick={() => setActiveTab('orders')}
             className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap",
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap",
               activeTab === 'orders' ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30" : "text-slate-400 hover:text-white"
             )}
           >
-            <DollarSign className="w-4 h-4" /> Buyurtmalar
+            <DollarSign className="w-4 h-4" /> <span>Buyurtmalar</span>
           </button>
+
           <button
             onClick={() => setActiveTab('audit')}
             className={cn(
-              "flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all whitespace-nowrap",
+              "flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all whitespace-nowrap",
               activeTab === 'audit' ? "bg-blue-600 text-white shadow-lg shadow-blue-500/30" : "text-slate-400 hover:text-white"
             )}
           >
-            <FileText className="w-4 h-4" /> Audit Jurnali
+            <FileText className="w-4 h-4" /> <span>Audit Jurnali</span>
           </button>
         </div>
 
         {/* Tab 1: DASHBOARD */}
         {activeTab === 'dashboard' && (
-          <div className="space-y-8 animate-in fade-in duration-200">
-            {/* 4 Stat Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="glass-card p-6 rounded-[2rem] border border-white/10">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Foydalanuvchilar</span>
-                  <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-400 flex items-center justify-center">
-                    <Users className="w-5 h-5" />
-                  </div>
-                </div>
-                <h3 className="text-3xl font-black text-white">{stats?.totalUsers || 0}</h3>
-                <span className="text-[11px] text-emerald-400 font-bold">Faol ro'yxatdan o'tganlar</span>
+          <div className="space-y-6">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="p-4 rounded-3xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+                <span className="text-xs text-slate-400 font-bold block mb-1">Foydalanuvchilar</span>
+                <span className="text-2xl font-black text-white">{stats?.totalUsers || 0}</span>
               </div>
-
-              <div className="glass-card p-6 rounded-[2rem] border border-white/10">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Testlar</span>
-                  <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center">
-                    <BookOpen className="w-5 h-5" />
-                  </div>
-                </div>
-                <h3 className="text-3xl font-black text-white">{stats?.totalQuizzes || 0}</h3>
-                <span className="text-[11px] text-indigo-400 font-bold">HEMIS va AI testlar</span>
+              <div className="p-4 rounded-3xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+                <span className="text-xs text-slate-400 font-bold block mb-1">Yaratilgan testlar</span>
+                <span className="text-2xl font-black text-blue-400">{stats?.totalQuizzes || 0}</span>
               </div>
-
-              <div className="glass-card p-6 rounded-[2rem] border border-white/10">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Topshirilgan Urinishlar</span>
-                  <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                    <Award className="w-5 h-5" />
-                  </div>
-                </div>
-                <h3 className="text-3xl font-black text-white">{stats?.totalAttempts || 0}</h3>
-                <span className="text-[11px] text-emerald-400 font-bold">Jami natijalar</span>
+              <div className="p-4 rounded-3xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+                <span className="text-xs text-slate-400 font-bold block mb-1">Urinishlar</span>
+                <span className="text-2xl font-black text-purple-400">{stats?.totalAttempts || 0}</span>
               </div>
-
-              <div className="glass-card p-6 rounded-[2rem] border border-white/10">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Jami Tushum</span>
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-400 flex items-center justify-center">
-                    <DollarSign className="w-5 h-5" />
-                  </div>
-                </div>
-                <h3 className="text-3xl font-black text-white">
-                  {(stats?.totalRevenue || 0).toLocaleString()} <span className="text-sm font-bold text-slate-400">so'm</span>
-                </h3>
-                <span className="text-[11px] text-amber-400 font-bold">To'langan buyurtmalar</span>
+              <div className="p-4 rounded-3xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+                <span className="text-xs text-slate-400 font-bold block mb-1">Buyurtmalar</span>
+                <span className="text-2xl font-black text-emerald-400">{stats?.totalOrders || 0}</span>
+              </div>
+              <div className="p-4 rounded-3xl bg-slate-900/60 border border-white/10 backdrop-blur-xl col-span-2 md:col-span-1">
+                <span className="text-xs text-slate-400 font-bold block mb-1">Jami Tushum</span>
+                <span className="text-2xl font-black text-amber-400">{(stats?.totalRevenue || 0).toLocaleString()} so'm</span>
               </div>
             </div>
 
-            {/* Active Subscriptions Breakdown */}
-            <div className="glass-card p-8 rounded-[2.5rem] border border-white/10">
-              <h3 className="text-lg font-black text-white mb-6">Faol Obunalar Taqsimoti</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                <div className="p-5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-between">
+            {/* Faol Obunalar Bo'linishi */}
+            <div className="p-6 rounded-3xl bg-slate-900/60 border border-white/10 backdrop-blur-xl">
+              <h3 className="text-sm font-black text-white uppercase tracking-wider mb-4">
+                💎 Faol Obunalar Bo'linishi
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
                   <div>
-                    <span className="text-xs font-bold text-slate-400 block mb-1">Talaba Start (7 kun)</span>
-                    <h4 className="text-2xl font-black text-white">{stats?.activeSubscriptions?.start || 0} ta</h4>
+                    <span className="text-xs text-slate-400 block font-bold">🥉 Talaba Start</span>
+                    <span className="text-xl font-black text-white">{stats?.activeSubscriptions?.start || 0} ta</span>
                   </div>
-                  <span className="px-3 py-1 rounded-xl bg-blue-500/10 text-blue-400 font-black text-xs">7 999 so'm</span>
                 </div>
-
-                <div className="p-5 rounded-2xl bg-blue-500/10 border border-blue-500/30 flex items-center justify-between">
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
                   <div>
-                    <span className="text-xs font-bold text-blue-400 block mb-1">Sessiya Pro (30 kun)</span>
-                    <h4 className="text-2xl font-black text-white">{stats?.activeSubscriptions?.pro || 0} ta</h4>
+                    <span className="text-xs text-blue-400 block font-bold">🥈 Sessiya Pro</span>
+                    <span className="text-xl font-black text-blue-300">{stats?.activeSubscriptions?.pro || 0} ta</span>
                   </div>
-                  <span className="px-3 py-1 rounded-xl bg-blue-600 text-white font-black text-xs">29 999 so'm</span>
                 </div>
-
-                <div className="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between">
+                <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/5 flex items-center justify-between">
                   <div>
-                    <span className="text-xs font-bold text-amber-400 block mb-1">Grand Master (90 kun)</span>
-                    <h4 className="text-2xl font-black text-white">{stats?.activeSubscriptions?.master || 0} ta</h4>
+                    <span className="text-xs text-amber-400 block font-bold">🥇 Grand Master</span>
+                    <span className="text-xl font-black text-amber-300">{stats?.activeSubscriptions?.master || 0} ta</span>
                   </div>
-                  <span className="px-3 py-1 rounded-xl bg-amber-500 text-slate-950 font-black text-xs">59 900 so'm</span>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Tab 2: USERS */}
+        {/* Tab 2: FOYDALANUVCHILAR */}
         {activeTab === 'users' && (
-          <div className="space-y-6 animate-in fade-in duration-200">
-            {/* Search Bar */}
-            <div className="flex items-center gap-3">
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
               <div className="relative flex-1">
-                <Search className="w-4 h-4 text-slate-400 absolute left-4 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="ID, ism yoki @username bo'yicha qidirish..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && loadUsers()}
-                  className="w-full pl-11 pr-4 py-3 bg-white/5 border border-white/10 rounded-2xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                  placeholder="ID, @username yoki ism bo'yicha qidirish..."
+                  className="w-full bg-slate-900/60 border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
                 />
               </div>
-              <button
-                onClick={loadUsers}
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-black text-xs uppercase tracking-wider rounded-2xl transition-all"
-              >
-                Qidirish
-              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={loadUsers}
+                  className="px-4 py-2.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs transition-all"
+                >
+                  Qidirish
+                </button>
+                <button
+                  onClick={() => setShowBulkModal(true)}
+                  className="px-4 py-2.5 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all shadow-md shadow-purple-600/20"
+                >
+                  <Users className="w-3.5 h-3.5" />
+                  <span>Ommaviy obuna (Bulk)</span>
+                </button>
+              </div>
             </div>
 
-            {/* Users Table */}
-            <div className="glass-card rounded-[2.5rem] border border-white/10 overflow-hidden">
-              <div className="overflow-x-auto">
+            {loadingUsers ? (
+              <div className="py-20 text-center text-slate-400 text-xs">Foydalanuvchilar yuklanmoqda...</div>
+            ) : (
+              <div className="overflow-x-auto rounded-3xl border border-white/10 bg-slate-900/60 backdrop-blur-xl">
                 <table className="w-full text-left text-xs">
-                  <thead className="bg-white/5 border-b border-white/10 text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                  <thead className="bg-white/5 border-b border-white/10 text-slate-400 font-bold uppercase text-[10px]">
                     <tr>
-                      <th className="py-4 px-6">Foydalanuvchi</th>
-                      <th className="py-4 px-6">Telegram ID</th>
-                      <th className="py-4 px-6">Tarif</th>
-                      <th className="py-4 px-6">Rol</th>
-                      <th className="py-4 px-6">Ro'yxatdan o'tgan</th>
-                      <th className="py-4 px-6 text-right">Amallar</th>
+                      <th className="p-3.5">Foydalanuvchi</th>
+                      <th className="p-3.5">Telegram ID</th>
+                      <th className="p-3.5">Tarif</th>
+                      <th className="p-3.5">Holati</th>
+                      <th className="p-3.5 text-right">Amallar</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-white/[0.07]">
-                    {userList.map((u) => {
-                      const isPro = u.subscription_plan === 'pro' || u.subscription_plan === 'master';
-                      return (
-                        <tr key={u.id} className="hover:bg-white/[0.02] transition-colors">
-                          <td className="py-4 px-6">
-                            <div className="font-bold text-white">{u.first_name} {u.last_name || ''}</div>
-                            {u.username && <div className="text-[11px] text-blue-400">@{u.username}</div>}
-                          </td>
-                          <td className="py-4 px-6 font-mono text-slate-300">{u.id}</td>
-                          <td className="py-4 px-6">
-                            <span className={cn(
-                              "px-2.5 py-1 rounded-full text-[10px] font-black uppercase",
-                              u.subscription_plan === 'master' ? "bg-amber-500/20 text-amber-300" :
-                              u.subscription_plan === 'pro' ? "bg-blue-500/20 text-blue-300" :
-                              u.subscription_plan === 'start' ? "bg-indigo-500/20 text-indigo-300" :
-                              "bg-white/10 text-slate-400"
-                            )}>
-                              {u.subscription_plan || 'free'}
+                  <tbody className="divide-y divide-white/5 text-slate-300">
+                    {userList.map(u => (
+                      <tr key={u.id} className="hover:bg-white/[0.02]">
+                        <td className="p-3.5 font-bold text-white">
+                          <div className="flex items-center gap-2">
+                            <span>{u.first_name || 'Noma\'lum'}</span>
+                            {u.username && <span className="text-blue-400 text-[11px]">@{u.username}</span>}
+                          </div>
+                        </td>
+                        <td className="p-3.5 font-mono text-[11px] text-slate-400">{u.id}</td>
+                        <td className="p-3.5">
+                          <span className={cn(
+                            "px-2 py-0.5 rounded-md text-[10px] font-black uppercase",
+                            u.subscription_plan === 'master' ? "bg-amber-500/20 text-amber-300 border border-amber-500/30" :
+                            u.subscription_plan === 'pro' ? "bg-blue-500/20 text-blue-300 border border-blue-500/30" :
+                            u.subscription_plan === 'start' ? "bg-purple-500/20 text-purple-300 border border-purple-500/30" :
+                            "bg-white/5 text-slate-400"
+                          )}>
+                            {u.subscription_plan || 'free'}
+                          </span>
+                        </td>
+                        <td className="p-3.5">
+                          {u.is_banned ? (
+                            <span className="text-red-400 font-bold text-[10px] bg-red-500/10 px-2 py-0.5 rounded-full border border-red-500/20">
+                              🚫 Bloklangan
                             </span>
-                          </td>
-                          <td className="py-4 px-6 text-slate-400 font-semibold">{u.role || 'student'}</td>
-                          <td className="py-4 px-6 text-slate-400">{u.created_at ? new Date(u.created_at).toLocaleDateString() : '-'}</td>
-                          <td className="py-4 px-6 text-right space-x-2">
-                            <button
-                              onClick={() => setSelectedUserForGrant(u)}
-                              className="px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white font-bold text-[11px] transition-all"
-                            >
-                              + Obuna berish
-                            </button>
-                            {isPro && (
-                              <button
-                                onClick={() => setConfirmCancelUser({ id: u.id, name: u.first_name })}
-                                className="px-3 py-1.5 rounded-xl bg-red-500/20 hover:bg-red-600 text-red-300 hover:text-white font-bold text-[11px] transition-all"
-                              >
-                                Bekor qilish
-                              </button>
+                          ) : (
+                            <span className="text-emerald-400 font-bold text-[10px] bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                              ✅ Faol
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3.5 text-right space-x-1.5">
+                          <button
+                            onClick={() => setSelectedUserForGrant(u)}
+                            className="px-2.5 py-1 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 font-bold text-[11px]"
+                          >
+                            Obuna berish
+                          </button>
+                          <button
+                            onClick={() => setBanUserTarget(u)}
+                            className={cn(
+                              "px-2.5 py-1 rounded-xl border font-bold text-[11px]",
+                              u.is_banned 
+                                ? "bg-emerald-600/20 text-emerald-300 border-emerald-500/30" 
+                                : "bg-red-600/20 text-red-300 border-red-500/30"
                             )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                          >
+                            {u.is_banned ? "Unban" : "Ban"}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
-            </div>
+            )}
           </div>
         )}
 
-        {/* Tab 3: SUBSCRIPTIONS */}
-        {activeTab === 'subscriptions' && (
-          <div className="glass-card rounded-[2.5rem] border border-white/10 overflow-hidden animate-in fade-in duration-200">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-white/5 border-b border-white/10 text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                  <tr>
-                    <th className="py-4 px-6">ID / Foydalanuvchi</th>
-                    <th className="py-4 px-6">Tarif</th>
-                    <th className="py-4 px-6">Boshlanish</th>
-                    <th className="py-4 px-6">Tugash</th>
-                    <th className="py-4 px-6">Holat</th>
-                    <th className="py-4 px-6">Manba</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.07]">
-                  {subscriptionsList.map((s) => (
-                    <tr key={s.id} className="hover:bg-white/[0.02]">
-                      <td className="py-4 px-6">
-                        <div className="font-bold text-white">{s.first_name || 'Foydalanuvchi'}</div>
-                        <div className="font-mono text-[11px] text-slate-400">{s.user_id}</div>
-                      </td>
-                      <td className="py-4 px-6 font-black uppercase text-blue-400">{s.plan_id}</td>
-                      <td className="py-4 px-6 text-slate-300">{new Date(s.starts_at).toLocaleDateString()}</td>
-                      <td className="py-4 px-6 text-slate-300">{new Date(s.expires_at).toLocaleDateString()}</td>
-                      <td className="py-4 px-6">
-                        <span className={cn(
-                          "px-2.5 py-1 rounded-full text-[10px] font-black uppercase",
-                          s.status === 'active' ? "bg-emerald-500/20 text-emerald-400" :
-                          s.status === 'scheduled' ? "bg-amber-500/20 text-amber-400" :
-                          "bg-white/10 text-slate-400"
-                        )}>
-                          {s.status}
+        {/* Tab 3: MODERATSIYA (Shikoyatlar navbati) */}
+        {activeTab === 'moderation' && (
+          <div className="space-y-4">
+            <h3 className="text-base font-black text-white">Shikoyat qilingan testlar navbati</h3>
+            {reportsList.length === 0 ? (
+              <div className="py-20 text-center text-slate-400 text-xs">
+                ✅ Hozirda hech qanday shikoyat yo'q. Barcha testlar toza!
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {reportsList.map(rep => (
+                  <div key={rep.report_id} className="p-4 rounded-2xl bg-slate-900/60 border border-white/10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-300 text-[10px] font-black uppercase">
+                          {rep.reason}
                         </span>
-                      </td>
-                      <td className="py-4 px-6 text-slate-400 font-semibold">{s.source}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        <span className="text-xs text-slate-400">{new Date(rep.reported_at).toLocaleDateString()}</span>
+                      </div>
+                      <h4 className="font-extrabold text-white text-sm">{rep.quiz_title || `Quiz ID: ${rep.quiz_id}`}</h4>
+                      <p className="text-xs text-slate-400">
+                        Muallif: {rep.author_name || rep.author_id} • Shikoyatchi: {rep.reporter_id}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleResolveReport(rep.report_id, 'dismiss')}
+                        className="px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-xs font-bold border border-white/10"
+                      >
+                        Rad etish (Asossiz)
+                      </button>
+                      <button
+                        onClick={() => handleResolveReport(rep.report_id, 'hide')}
+                        className="px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-bold border border-amber-500/30"
+                      >
+                        Yashirish (Hide)
+                      </button>
+                      <button
+                        onClick={() => handleResolveReport(rep.report_id, 'delete')}
+                        className="px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/30 text-red-300 text-xs font-bold border border-red-500/30"
+                      >
+                        O'chirish (Delete)
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {/* Tab 4: ORDERS */}
-        {activeTab === 'orders' && (
-          <div className="glass-card rounded-[2.5rem] border border-white/10 overflow-hidden animate-in fade-in duration-200">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-white/5 border-b border-white/10 text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                  <tr>
-                    <th className="py-4 px-6">Buyurtma ID</th>
-                    <th className="py-4 px-6">Foydalanuvchi</th>
-                    <th className="py-4 px-6">Tarif</th>
-                    <th className="py-4 px-6">Summa</th>
-                    <th className="py-4 px-6">Holat</th>
-                    <th className="py-4 px-6">Usul</th>
-                    <th className="py-4 px-6">Sana</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.07]">
-                  {ordersList.map((o) => (
-                    <tr key={o.id} className="hover:bg-white/[0.02]">
-                      <td className="py-4 px-6 font-mono font-bold text-white">{o.id}</td>
-                      <td className="py-4 px-6">
-                        <div className="font-bold text-white">{o.first_name || 'Foydalanuvchi'}</div>
-                        <div className="font-mono text-[11px] text-slate-400">{o.user_id}</div>
-                      </td>
-                      <td className="py-4 px-6 font-black uppercase text-blue-400">{o.plan}</td>
-                      <td className="py-4 px-6 font-bold text-white">{o.amount?.toLocaleString()} so'm</td>
-                      <td className="py-4 px-6">
-                        <span className={cn(
-                          "px-2.5 py-1 rounded-full text-[10px] font-black uppercase",
-                          o.status === 'completed' ? "bg-emerald-500/20 text-emerald-400" :
-                          o.status === 'pending' ? "bg-amber-500/20 text-amber-400" :
-                          "bg-red-500/20 text-red-400"
-                        )}>
-                          {o.status}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 uppercase text-slate-400">{o.payment_method}</td>
-                      <td className="py-4 px-6 text-slate-400">{new Date(o.created_at).toLocaleDateString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+        {/* Tab 4: XABARNOMA (Broadcast) */}
+        {activeTab === 'broadcast' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="p-6 rounded-3xl bg-slate-900/60 border border-white/10 backdrop-blur-xl space-y-4">
+              <h3 className="text-base font-black text-white flex items-center gap-2">
+                <Megaphone className="w-5 h-5 text-blue-400" />
+                <span>Yangi Xabarnoma Yuborish</span>
+              </h3>
 
-        {/* Tab 5: AUDIT LOG */}
-        {activeTab === 'audit' && (
-          <div className="glass-card rounded-[2.5rem] border border-white/10 overflow-hidden animate-in fade-in duration-200">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-white/5 border-b border-white/10 text-[10px] font-black uppercase text-slate-400 tracking-wider">
-                  <tr>
-                    <th className="py-4 px-6">Vaqt</th>
-                    <th className="py-4 px-6">Admin ID</th>
-                    <th className="py-4 px-6">Amal</th>
-                    <th className="py-4 px-6">Nishon</th>
-                    <th className="py-4 px-6">Tafsilotlar</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/[0.07]">
-                  {auditLogsList.map((a) => (
-                    <tr key={a.id} className="hover:bg-white/[0.02]">
-                      <td className="py-4 px-6 text-slate-400">{new Date(a.created_at).toLocaleString()}</td>
-                      <td className="py-4 px-6 font-mono text-blue-400">{a.actor_id}</td>
-                      <td className="py-4 px-6 font-bold text-white uppercase text-[11px]">{a.action}</td>
-                      <td className="py-4 px-6 text-slate-300">{a.target_type}: {a.target_id}</td>
-                      <td className="py-4 px-6 font-mono text-[11px] text-slate-400">
-                        {a.details ? JSON.stringify(a.details) : '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Modal: OBUNA BERISH (TZ 6.3 OQIMI) */}
-        {selectedUserForGrant && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-in fade-in duration-150">
-            <div className="glass-card rounded-[2.5rem] p-7 md:p-8 max-w-md w-full shadow-2xl border border-blue-500/40 animate-in zoom-in-95 duration-200">
-              <div className="flex items-center justify-between pb-4 border-b border-white/10 mb-6">
-                <div>
-                  <span className="text-[10px] font-black uppercase text-blue-400 tracking-widest">ADMIN HARAKATI</span>
-                  <h3 className="text-xl font-black text-white">Obuna Taqdim Etish</h3>
-                </div>
-                <button
-                  onClick={() => setSelectedUserForGrant(null)}
-                  className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-slate-400 hover:text-white"
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Auditoriya Segmenti:</label>
+                <select
+                  value={broadcastSegment}
+                  onChange={(e: any) => setBroadcastSegment(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl px-3.5 py-2.5 text-xs text-white font-bold"
                 >
-                  ✕
-                </button>
+                  <option value="all">Barcha foydalanuvchilar (All)</option>
+                  <option value="pro">Faqat Pro va Master obunachilar</option>
+                  <option value="free">Faqat Bepul foydalanuvchilar</option>
+                </select>
               </div>
 
-              <div className="space-y-4 mb-6">
-                <div className="p-3.5 rounded-2xl bg-white/5 border border-white/10">
-                  <span className="text-[11px] text-slate-400 font-bold block mb-0.5">Foydalanuvchi:</span>
-                  <div className="font-black text-white">{selectedUserForGrant.first_name} ({selectedUserForGrant.id})</div>
-                </div>
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Xabar Matni:</label>
+                <textarea
+                  value={broadcastMessage}
+                  onChange={(e) => setBroadcastMessage(e.target.value)}
+                  placeholder="Hurmatli talabalar! QUIZGEN da yangi imkoniyatlar..."
+                  rows={6}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500/50"
+                />
+                <span className="text-[10px] text-slate-500 text-right block mt-1">
+                  {broadcastMessage.length} ta belgi
+                </span>
+              </div>
 
-                <div>
-                  <label className="text-xs font-bold text-slate-400 block mb-1.5">Tarifni tanlang:</label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => { setGrantPlan('start'); setGrantDays(7); }}
-                      className={cn(
-                        "py-2.5 rounded-xl text-xs font-black uppercase border transition-all",
-                        grantPlan === 'start' ? "bg-indigo-600 border-indigo-500 text-white" : "bg-white/5 border-white/10 text-slate-400"
-                      )}
-                    >
-                      Start
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setGrantPlan('pro'); setGrantDays(30); }}
-                      className={cn(
-                        "py-2.5 rounded-xl text-xs font-black uppercase border transition-all",
-                        grantPlan === 'pro' ? "bg-blue-600 border-blue-500 text-white" : "bg-white/5 border-white/10 text-slate-400"
-                      )}
-                    >
-                      Pro
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setGrantPlan('master'); setGrantDays(90); }}
-                      className={cn(
-                        "py-2.5 rounded-xl text-xs font-black uppercase border transition-all",
-                        grantPlan === 'master' ? "bg-amber-500 border-amber-400 text-slate-950 font-black" : "bg-white/5 border-white/10 text-slate-400"
-                      )}
-                    >
-                      Master
-                    </button>
+              <button
+                disabled={sendingBroadcast || !broadcastMessage.trim()}
+                onClick={handleSendBroadcast}
+                className="w-full py-3 rounded-2xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-extrabold text-xs shadow-lg shadow-blue-600/30 transition-all flex items-center justify-center gap-2"
+              >
+                <Send className="w-4 h-4" />
+                <span>{sendingBroadcast ? "Yuborilmoqda..." : "Xabarnomani Yuborish"}</span>
+              </button>
+            </div>
+
+            {/* Tarix */}
+            <div className="p-6 rounded-3xl bg-slate-900/60 border border-white/10 backdrop-blur-xl space-y-4">
+              <h3 className="text-base font-black text-white">Yuborilgan Xabarnomalar Tarixi</h3>
+              {broadcastsHistory.length === 0 ? (
+                <p className="text-xs text-slate-500">Hozircha xabarnomalar yuborilmagan.</p>
+              ) : (
+                <div className="space-y-3">
+                  {broadcastsHistory.map(b => (
+                    <div key={b.id} className="p-3 rounded-2xl bg-white/[0.02] border border-white/5 space-y-1">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span className="font-bold text-blue-400">Segment: {b.segment}</span>
+                        <span>{new Date(b.created_at).toLocaleDateString()}</span>
+                      </div>
+                      <p className="text-xs text-white font-medium line-clamp-2">{b.message}</p>
+                      <span className="text-[10px] text-emerald-400 font-bold block">
+                        ✅ Yetkazildi: {b.sent_count} ta
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 5: PROMOKODLAR */}
+        {activeTab === 'promos' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-white">Promokodlar Boshqaruvi</h3>
+              <button
+                onClick={() => setShowPromoModal(true)}
+                className="px-4 py-2 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs flex items-center gap-1.5 transition-all"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Yangi Promokod</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {promoCodesList.map(pr => (
+                <div key={pr.id} className="p-4 rounded-2xl bg-slate-900/60 border border-white/10 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono font-black text-sm text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">
+                        {pr.code}
+                      </span>
+                      <button
+                        onClick={() => handleDeletePromo(pr.id)}
+                        className="text-slate-500 hover:text-red-400"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-300 font-bold">
+                      {pr.type === 'percent' ? `${pr.value}% chegirma` : pr.type === 'fixed' ? `${pr.value.toLocaleString()} so'm chegirma` : `+${pr.value} kun bepul`}
+                    </p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      Ishlatildi: {pr.current_uses} / {pr.max_uses} ta
+                    </p>
                   </div>
                 </div>
+              ))}
+            </div>
+          </div>
+        )}
 
+        {/* Tab 6: OBUNALAR */}
+        {activeTab === 'subscriptions' && (
+          <div className="rounded-3xl border border-white/10 bg-slate-900/60 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-white/5 border-b border-white/10 text-slate-400 font-bold uppercase text-[10px]">
+                <tr>
+                  <th className="p-3.5">Foydalanuvchi</th>
+                  <th className="p-3.5">Tarif</th>
+                  <th className="p-3.5">Holati</th>
+                  <th className="p-3.5">Boshlangan</th>
+                  <th className="p-3.5">Tugash vaqti</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 text-slate-300">
+                {subscriptionsList.map(s => (
+                  <tr key={s.id}>
+                    <td className="p-3.5 font-bold text-white">{s.first_name || s.user_id}</td>
+                    <td className="p-3.5 font-bold text-blue-400 uppercase">{s.plan_id}</td>
+                    <td className="p-3.5 font-bold text-emerald-400">{s.status}</td>
+                    <td className="p-3.5 text-slate-400">{new Date(s.starts_at).toLocaleDateString()}</td>
+                    <td className="p-3.5 text-slate-400">{new Date(s.expires_at).toLocaleDateString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Tab 7: BUYURTMALAR */}
+        {activeTab === 'orders' && (
+          <div className="rounded-3xl border border-white/10 bg-slate-900/60 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-white/5 border-b border-white/10 text-slate-400 font-bold uppercase text-[10px]">
+                <tr>
+                  <th className="p-3.5">Buyurtma ID</th>
+                  <th className="p-3.5">Foydalanuvchi</th>
+                  <th className="p-3.5">Tarif</th>
+                  <th className="p-3.5">Summa</th>
+                  <th className="p-3.5">Holati</th>
+                  <th className="p-3.5">Vaqti</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 text-slate-300">
+                {ordersList.map(o => (
+                  <tr key={o.id}>
+                    <td className="p-3.5 font-mono text-[11px] text-slate-400">{o.id}</td>
+                    <td className="p-3.5 font-bold text-white">{o.first_name || o.user_id}</td>
+                    <td className="p-3.5 uppercase font-bold text-blue-400">{o.plan}</td>
+                    <td className="p-3.5 font-bold text-amber-400">{(o.amount || 0).toLocaleString()} so'm</td>
+                    <td className="p-3.5 font-bold">{o.status}</td>
+                    <td className="p-3.5 text-slate-400">{o.created_at}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Tab 8: AUDIT JURNALI */}
+        {activeTab === 'audit' && (
+          <div className="rounded-3xl border border-white/10 bg-slate-900/60 overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-white/5 border-b border-white/10 text-slate-400 font-bold uppercase text-[10px]">
+                <tr>
+                  <th className="p-3.5">Admin ID</th>
+                  <th className="p-3.5">Amal</th>
+                  <th className="p-3.5">Nishon</th>
+                  <th className="p-3.5">Tafsilotlar</th>
+                  <th className="p-3.5">Vaqt</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 text-slate-300">
+                {auditLogsList.map(a => (
+                  <tr key={a.id}>
+                    <td className="p-3.5 font-mono text-[11px] text-slate-400">{a.actor_id}</td>
+                    <td className="p-3.5 font-bold text-purple-300">{a.action}</td>
+                    <td className="p-3.5 font-mono text-[11px]">{a.target_id}</td>
+                    <td className="p-3.5 text-slate-400 text-[11px]">{JSON.stringify(a.details)}</td>
+                    <td className="p-3.5 text-slate-500 text-[11px]">{a.created_at}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Ommaviy obuna (Bulk Grant) modali */}
+        {showBulkModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+            <div className="w-full max-w-lg p-6 rounded-3xl bg-slate-900 border border-white/10 shadow-2xl relative space-y-4">
+              <button
+                onClick={() => { setShowBulkModal(false); setBulkResult(null); }}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+              <h3 className="text-lg font-black text-white">Ommaviy Obuna Taqdim Etish (Bulk)</h3>
+              <p className="text-xs text-slate-400">
+                Guruh yoki talabalar ro'yxatiga bir vaqtning o'zida obuna berish
+              </p>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  Telegram ID yoki @usernamelar (har bir qatorda bittadan yoki vergul bilan):
+                </label>
+                <textarea
+                  value={bulkUsersText}
+                  onChange={(e) => setBulkUsersText(e.target.value)}
+                  placeholder="123456789&#10;987654321&#10;@alisher_talaba"
+                  rows={5}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl p-3 text-xs font-mono text-white placeholder-slate-600 focus:outline-none focus:border-purple-500/50"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-400 block mb-1.5">Muddati (kun):</label>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Tarif:</label>
+                  <select
+                    value={bulkPlan}
+                    onChange={(e: any) => setBulkPlan(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs text-white font-bold"
+                  >
+                    <option value="start">🥉 Talaba Start</option>
+                    <option value="pro">🥈 Sessiya Pro</option>
+                    <option value="master">🥇 Grand Master</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Kun soni:</label>
                   <input
                     type="number"
-                    min={1}
-                    value={grantDays}
-                    onChange={(e) => setGrantDays(parseInt(e.target.value) || 1)}
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    value={bulkDays}
+                    onChange={(e) => setBulkDays(parseInt(e.target.value) || 30)}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs text-white font-bold"
                   />
                 </div>
+              </div>
 
+              <button
+                disabled={bulkLoading || !bulkUsersText.trim()}
+                onClick={handleBulkGrant}
+                className="w-full py-3 rounded-2xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 disabled:opacity-50 text-white font-black text-xs shadow-lg shadow-purple-600/30 transition-all"
+              >
+                {bulkLoading ? "Bajarilmoqda..." : "Tasdiqlash va Berish"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Ban / Unban modali */}
+        {banUserTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+            <div className="w-full max-w-sm p-6 rounded-3xl bg-slate-900 border border-white/10 shadow-2xl relative space-y-4">
+              <button
+                onClick={() => setBanUserTarget(null)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+              <h3 className="text-lg font-black text-white">
+                {banUserTarget.is_banned ? "Blokdan chiqarish" : "Foydalanuvchini bloklash"}
+              </h3>
+              <p className="text-xs text-slate-400">
+                Foydalanuvchi: <b className="text-white">{banUserTarget.first_name}</b> ({banUserTarget.id})
+              </p>
+
+              {!banUserTarget.is_banned && (
                 <div>
-                  <label className="text-xs font-bold text-slate-400 block mb-1.5">Sabab (Audit uchun majburiy):</label>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Sabab:</label>
                   <input
                     type="text"
-                    value={grantReason}
-                    onChange={(e) => setGrantReason(e.target.value)}
-                    placeholder="Masalan: Tanlov g'olibi yoki guruh uchun..."
-                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                    value={banReason}
+                    onChange={(e) => setBanReason(e.target.value)}
+                    placeholder="Qoidabuzarlik sababi..."
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs text-white"
                   />
                 </div>
+              )}
 
-                <label className="flex items-center gap-2 cursor-pointer pt-1">
-                  <input
-                    type="checkbox"
-                    checked={notifyUser}
-                    onChange={(e) => setNotifyUser(e.target.checked)}
-                    className="accent-blue-500"
-                  />
-                  <span className="text-xs font-bold text-slate-300">Foydalanuvchiga Telegramda xabar yuborish</span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBanUserTarget(null)}
+                  className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-slate-300"
+                >
+                  Bekor qilish
+                </button>
+                <button
+                  type="button"
+                  disabled={banLoading}
+                  onClick={handleBanSubmit}
+                  className={cn(
+                    "flex-1 py-2.5 rounded-xl font-black text-xs text-white shadow-lg",
+                    banUserTarget.is_banned ? "bg-emerald-600 hover:bg-emerald-500" : "bg-red-600 hover:bg-red-500"
+                  )}
+                >
+                  {banLoading ? "Bajarilmoqda..." : banUserTarget.is_banned ? "Blokdan chiqarish" : "Bloklash"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Obuna berish modali */}
+        {selectedUserForGrant && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+            <div className="w-full max-w-md p-6 rounded-3xl bg-slate-900 border border-white/10 shadow-2xl relative space-y-4">
+              <button
+                onClick={() => setSelectedUserForGrant(null)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+              <h3 className="text-lg font-black text-white">Obuna Berish</h3>
+              <p className="text-xs text-slate-400">
+                Foydalanuvchi: <b className="text-white">{selectedUserForGrant.first_name}</b> ({selectedUserForGrant.id})
+              </p>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Tarif:</label>
+                <select
+                  value={grantPlan}
+                  onChange={(e: any) => setGrantPlan(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs text-white font-bold"
+                >
+                  <option value="start">🥉 Talaba Start</option>
+                  <option value="pro">🥈 Sessiya Pro</option>
+                  <option value="master">🥇 Grand Master</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Kun soni:</label>
+                <input
+                  type="number"
+                  value={grantDays}
+                  onChange={(e) => setGrantDays(parseInt(e.target.value) || 30)}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs text-white font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Sabab:</label>
+                <input
+                  type="text"
+                  value={grantReason}
+                  onChange={(e) => setGrantReason(e.target.value)}
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs text-white"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="notify"
+                  checked={notifyUser}
+                  onChange={(e) => setNotifyUser(e.target.checked)}
+                  className="w-4 h-4 text-blue-600 rounded"
+                />
+                <label htmlFor="notify" className="text-xs text-slate-300 font-bold cursor-pointer">
+                  Foydalanuvchiga Telegramda xabar yuborish
                 </label>
               </div>
 
-              <div className="flex gap-2.5">
+              <div className="flex gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setSelectedUserForGrant(null)}
-                  className="flex-1 py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-xs font-bold text-slate-300"
+                  className="flex-1 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-slate-300"
                 >
                   Bekor qilish
                 </button>
                 <button
                   type="button"
-                  onClick={handleGrantSubscription}
                   disabled={grantLoading}
-                  className="flex-1 py-3.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-blue-500/25 disabled:opacity-50"
+                  onClick={handleGrantSubscription}
+                  className="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs shadow-lg shadow-blue-600/30"
                 >
-                  {grantLoading ? "Yuklanmoqda..." : "Tasdiqlash"}
+                  {grantLoading ? "Berilmoqda..." : "Berish"}
                 </button>
               </div>
             </div>
           </div>
         )}
 
-        {/* Obunani bekor qilish tasdiqlash modali */}
-        {confirmCancelUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-            <div className="glass-card w-full max-w-md p-6 rounded-3xl border border-red-500/30 shadow-2xl animate-in fade-in zoom-in-95">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-3 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400">
-                  <AlertTriangle className="w-6 h-6" />
+        {/* Promokod yaratish modali */}
+        {showPromoModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md">
+            <div className="w-full max-w-sm p-6 rounded-3xl bg-slate-900 border border-white/10 shadow-2xl relative space-y-4">
+              <button
+                onClick={() => setShowPromoModal(false)}
+                className="absolute top-4 right-4 text-slate-400 hover:text-white"
+              >
+                ✕
+              </button>
+              <h3 className="text-lg font-black text-white">Yangi Promokod</h3>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">Kod:</label>
+                <input
+                  type="text"
+                  value={newPromoCode}
+                  onChange={(e) => setNewPromoCode(e.target.value.toUpperCase())}
+                  placeholder="TALABA2026"
+                  className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs font-mono text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Turi:</label>
+                  <select
+                    value={newPromoType}
+                    onChange={(e: any) => setNewPromoType(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs text-white font-bold"
+                  >
+                    <option value="percent">Foiz (%)</option>
+                    <option value="fixed">Aniq summa (so'm)</option>
+                    <option value="free_days">Bonus kunlar</option>
+                  </select>
                 </div>
                 <div>
-                  <h3 className="text-lg font-black text-white">Obunani bekor qilish</h3>
-                  <p className="text-xs text-slate-400">Ushbu amal darhol kuchga kiradi</p>
+                  <label className="text-xs font-bold text-slate-300 block mb-1">Qiymat:</label>
+                  <input
+                    type="number"
+                    value={newPromoValue}
+                    onChange={(e) => setNewPromoValue(Number(e.target.value))}
+                    className="w-full bg-black/40 border border-white/10 rounded-2xl px-3 py-2 text-xs text-white font-bold"
+                  />
                 </div>
               </div>
 
-              <p className="text-xs text-slate-300 leading-relaxed mb-6">
-                Foydalanuvchi <strong className="text-white font-bold">{confirmCancelUser.name}</strong> ({confirmCancelUser.id}) ning faol obunasi bekor qilinadi va hisob bepul (Free) rejimga qaytariladi. Davom ettirasizmi?
-              </p>
-
-              <div className="flex gap-2.5">
-                <button
-                  type="button"
-                  onClick={() => setConfirmCancelUser(null)}
-                  disabled={cancelLoading}
-                  className="flex-1 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-xs font-bold text-slate-300"
-                >
-                  Bekor qilish
-                </button>
-                <button
-                  type="button"
-                  onClick={executeCancelSubscription}
-                  disabled={cancelLoading}
-                  className="flex-1 py-3 bg-red-600 hover:bg-red-500 text-white rounded-2xl font-black text-xs uppercase tracking-wider shadow-lg shadow-red-500/25 disabled:opacity-50"
-                >
-                  {cancelLoading ? "Bajarilmoqda..." : "Ha, bekor qilinsin"}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={handleCreatePromo}
+                disabled={!newPromoCode.trim()}
+                className="w-full py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-black text-xs shadow-lg shadow-blue-600/30 transition-all"
+              >
+                Yaratish
+              </button>
             </div>
           </div>
         )}
