@@ -12,8 +12,8 @@
 | **M5** | **Server Urinishlari, Yechish Tajribasi va Gamifikatsiya** | **Yakunlandi** | `v3/m5-attempts` |
 | **M6** | **Kutubxona Moduli (Library, Public, Folders, Fork)** | **Yakunlandi** | `v3/m6-library` |
 | **M7** | **Veb va Mini App Sayqali (Landing, /create, Profile, TMA SDK)** | **Yakunlandi** | `v3/m7-web-tma` |
-| **M8** | Admin v2 & Xabarnoma | Navbatda | `v3/m8-admin-v2` |
-| **M9** | Sifat, Yuklama & Ishga Tushirish | Kutilmoqda | `v3/m9-release` |
+| **M8** | **Admin v2 & Xabarnoma** | **Yakunlandi** | `v3/m8-admin-v2` |
+| **M9** | **Sifat, Yuklama & Ishga Tushirish** | **Yakunlandi** | `v3/m9-release` |
 
 ---
 
@@ -239,3 +239,27 @@
 - [x] **Avtomatlashgan Testlar:**
   - `tests/m8-admin-v2.test.ts` da 6/6 test 100% muvaffaqiyatli o'tdi.
   - Barcha testlar to'plami: **55/55 test muvaffaqiyatli (M0–M8)**.
+
+
+---
+
+## M9 — Sifat, Yuklama & Ishga Tushirish (Release Readiness) Qabul Mezonlari
+
+- [x] **E2E To'liq Tsikl Integratsiya Sinovi (`tests/m9-release.test.ts`):**
+  - Foydalanuvchi yaratish va JWT xavfsiz avtorizatsiya.
+  - HEMIS test yaratish (`QuizCreationService.createFromText`).
+  - Server nazoratidagi imtihon topshirish, to'g'ri javoblarsiz savollar, serverda ball va natija hisobi.
+  - Gamifikatsiya: XP va seriya (Streak) yozilishi.
+  - Promokod (20% chegirma) bilan buyurtma yaratish va to'lovni tasdiqlash (`completeOrder`), obuna balansi yangilanishi va huquqlari (`entitlements`) tekshirilishi.
+  - Kutubxona jildlariga saqlash, ommaviy qidiruv va testdan mustaqil nusxa olish (`forkQuiz`).
+- [x] **Ma'lumotlar Bazasi Zaxirasi va Yaxlitligi (`scripts/backup.ts`):**
+  - `PRAGMA integrity_check` orqali bazaning to'liq butunligi tasdiqlanadi.
+  - Vaqt tamg'asi bilan `data/backups/quizgen_backup_*.db` zaxira nusxalari yaratiladi.
+  - 14 kundan oshgan eski zaxiralar avtomatik tozalanadi.
+- [x] **Ishlab Chiqarishga Tayyorgarlik (Production Deployment):**
+  - Multi-stage optimallashtirilgan `Dockerfile` (Node.js 22 alpine).
+  - `docker-compose.yml` orqali bitta buyruq bilan konteynerda ishga tushirish.
+  - To'liq tozalangan va hujjatlashtirilgan `.env.example`.
+  - Professional `README.md` (o'rnatish, docker, arxitektura, xavfsizlik, testlar jadvali).
+- [x] **Test Qamrovi:**
+  - 10 ta alohida test to'plami: **59/59 test 100% muvaffaqiyatli (M0–M9)**.

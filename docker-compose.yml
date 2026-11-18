@@ -1,0 +1,17 @@
+services:
+  quizgen:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: quizgen-v3
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./uploads:/app/uploads
