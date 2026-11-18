@@ -78,10 +78,17 @@ export default function Navbar() {
           <span>{isPro ? planName : '💎 Tariflar'}</span>
         </Link>
 
-        {/* Kunlik Seriya / XP */}
-        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-black shadow-inner">
-          <Flame className="w-3.5 h-3.5 fill-current animate-bounce" />
-          <span>1 kun</span>
+        {/* Kunlik Seriya / XP (M5 — Real Gamifikatsiya) */}
+        <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-black shadow-inner">
+          <div className="flex items-center gap-1">
+            <Flame className="w-3.5 h-3.5 fill-current animate-bounce" />
+            <span>{user?.streak_days && user.streak_days > 0 ? `${user.streak_days} kun` : "1 kun"}</span>
+          </div>
+          {user?.xp !== undefined && (
+            <span className="text-[10px] bg-amber-500/20 px-1.5 py-0.5 rounded-md text-amber-300">
+              {user.xp} XP
+            </span>
+          )}
         </div>
 
         {/* HEMIS Status */}

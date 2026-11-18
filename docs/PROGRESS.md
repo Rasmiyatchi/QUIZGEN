@@ -90,3 +90,52 @@
 
 
 
+
+---
+
+## M4 — Test Yaratish Yadrosi va HEMIS Parser v3 Qabul Mezonlari Tekshiruvi
+
+- [x] **Yagona Test Yaratish Servisi (`QuizCreationService`):**
+  - Qoida 5: Web va Telegram bot bitta yagona servis orqali test yaratadi (`createFromFile`, `createFromText`, `createFromAi`, `createManual`).
+  - Fayl magic bytes tekshiruvi (.docx, .pdf, .txt) va xavfsiz matn ajratish (`extractTextFromFile`).
+  - Foydalanuvchi tarifi bo'yicha testdagi maksimal savollar cheklovi (Free: 100, Start: 150, Pro: 300, Master: 1000).
+- [x] **HEMIS Parser v3 (`parseHemisQuizWithReport`):**
+  - Format A (Simvolli format: ++++ va ====) to'liq qo'llab-quvvatlanadi.
+  - Format B (Raqamlangan format: 1. ... A) B) C) D) va Javob: A) to'liq qo'llab-quvvatlanadi.
+  - Mammoth DOCX HTML strong/bold/underline orqali to'g'ri javoblarni avtomatik aniqlash (`preprocessHtmlDocx`).
+  - `needsReview` va ogohlantirishlar tizimi (`ParseReport`): to'g'ri javobi belgilanmagan savollar jimgina o'tkazib yuborilmaydi yoki yolg'on "A" qilib olinmaydi.
+- [x] **Telegram Bot Integratsiyasi:**
+  - Botga `.docx` yoki `.txt` fayl yuborilganda `QuizCreationService.createFromFile` orqali bir zumda test yaratiladi.
+  - Tahlil hisoboti (`ParseReport`) va inline tugmalar (`[▶️ Testni boshlash]`, `[🃏 Flashcards]`, `[✏️ Tahrirlash]`) taqdim etiladi.
+- [x] **Avtomatlashgan Testlar:**
+  - `tests/m4-parser.test.ts` da 6/6 test 100% muvaffaqiyatli o'tdi.
+
+---
+
+## M5 — Server Urinishlari, Yechish Tajribasi va Gamifikatsiya Qabul Mezonlari Tekshiruvi
+
+- [x] **Server Nazoratidagi Urinishlar (TZ 8.5):**
+  - `POST /api/attempts` (quizId, mode) — serverda urinish (`in_progress`) yaratiladi, savollar to'g'ri javoblarsiz tozalanadi (S10: to'g'ri javoblar tarmoqqa sizmaydi).
+  - Imtihon rejimida server taymeri (`deadline_at`) hisoblanadi.
+- [x] **Boshqa Qurilmadan Davom Ettirish (Resume):**
+  - `GET /api/attempts/active/:quizId` — foydalanuvchining tugallanmagan urinishi, oraliq javoblari va qolgan vaqti avtomatik yuklanadi.
+  - `PUT /api/attempts/:id/answers` — oraliq javoblarni batch saqlash, brauzer yopilsa yoki internet uzilsa ham javoblar yo'qolmaydi.
+- [x] **O'rganish Rejimi (Study Mode):**
+  - `POST /api/attempts/:id/answer` — har bir savol tanlanganda serverdan darhol `{ isCorrect, correctAnswer, explanation }` olinadi va tushuntirish banneri ko'rsatiladi.
+- [x] **Urinishni Yakunlash (Finish) va Server Ball Hisobi:**
+  - `POST /api/attempts/:id/finish` — server ballni, foizni va xato savollar ro'yxatini (`wrong_questions`) to'liq hisoblaydi va saqlaydi.
+  - Urinish holati `completed` qilinadi, Telegram orqali natija xabarnomasi yuboriladi.
+- [x] **Xatolar Ustida Ishlash (`mode: 'retry_wrong'`):**
+  - Serverdagi oldingi urinishning `wrong_questions` ma'lumotlaridan yangi urinish yaratiladi (localStorage ga bog'liq emas).
+- [x] **Taymer Stale Closure Xatosi Tuzatildi:**
+  - `answersRef` va `timeSpentRef` orqali taymer tugaganda eng so'nggi javoblar serverga yo'qotishlarsiz yuboriladi.
+- [x] **Haqiqiy Gamifikatsiya (Real XP va Streak):**
+  - `users` jadvalida `streak_days`, `streak_updated_on` va `xp` ustunlari.
+  - Har bir topshirilgan test uchun XP va ketma-ket kunlar (streak) serverda hisoblanadi.
+  - `GET /api/users/me/stats` — shaxsiy statistika, darajalar (`Yangi talaba`, `Izlanuvchi`, `Faol talaba`, `Bilimdon`, `Usta`, `Grand Master`).
+  - `GET /api/quizzes/:id/leaderboard` — test bo'yicha reyting (leaderboard).
+  - Navbar da va History sahifasida haqiqiy streak va XP ko'rsatiladi.
+- [x] **UI Qoidalari (Rule 8):**
+  - `alert()` va `window.confirm()` butunlay yo'q qilindi, Glass tasdiqlash modallari o'rnatildi.
+- [x] **Avtomatlashgan Testlar:**
+  - `tests/m5-attempts.test.ts` da 5/5 test 100% muvaffaqiyatli o'tdi.

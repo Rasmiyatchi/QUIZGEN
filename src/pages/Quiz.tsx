@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   Loader2, ArrowRight, ArrowLeft, CheckCircle2, XCircle, X, Shuffle, 
@@ -26,6 +26,10 @@ interface QuizData {
 
 export default function Quiz() {
   const { quizId } = useParams();
+  const [searchParams] = useSearchParams();
+  const urlMode = searchParams.get('mode');
+  const urlAttemptId = searchParams.get('attemptId');
+
   const navigate = useNavigate();
   const { user, authFetch } = useAuth();
   
@@ -37,8 +41,15 @@ export default function Quiz() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   
-  // Rejim: study (o'rganish) vs exam (imtihon)
-  const [mode, setMode] = useState<'study' | 'exam'>('study');
+  // Rejim: study (o'rganish) vs exam (imtihon) vs retry_wrong (xatolar)
+  const [mode, setMode] = useState<'study' | 'exam' | 'retry_wrong'>(
+    urlMode === 'study' ? 'study' : urlMode === 'retry_wrong' ? 'retry_wrong' : 'exam'
+  );
+
+  // M5 — Server nazoratidagi faol urinish ID si
+  const [currentAttemptId, setCurrentAttemptId] = useState<string | null>(urlAttemptId || null);
+  // O'rganish rejimida savollar bo'yicha server tekshiruv natijasi
+  const [studyFeedback, setStudyFeedback] = useState<Record<number, { isCorrect: boolean; correctAnswer: number; explanation?: string }>>({});
   
   // Taymer
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
@@ -64,7 +75,106 @@ export default function Quiz() {
     async function fetchQuiz() {
       if (!quizId) return;
       try {
-        const queryParam = mode === 'study' ? '?mode=study' : '';
+        // 1. Agar URL da aniq attemptId berilgan bo'lsa (masalan, retry_wrong yoki qayta tiklash)
+        if (urlAttemptId) {
+          const aRes = await authFetch(`/api/attempts/${urlAttemptId}`);
+          if (aRes.ok) {
+            const aData = await aRes.json();
+            if (aData.attempt) {
+              setCurrentAttemptId(aData.attempt.id);
+              if (aData.attempt.mode) setMode(aData.attempt.mode);
+              if (aData.attempt.time_spent_seconds) setTimeSpent(aData.attempt.time_spent_seconds);
+              
+              if (aData.quiz) {
+                setQuiz(aData.quiz);
+                const qCount = aData.quiz.questions.length;
+                const loadedAnswers = aData.attempt.answers_given || new Array(qCount).fill(-1);
+                setAnswers(loadedAnswers);
+                setFlagged(new Array(qCount).fill(false));
+
+                if (aData.attempt.deadline_at) {
+                  const msLeft = new Date(aData.attempt.deadline_at).getTime() - Date.now();
+                  if (msLeft > 0) setTimeLeft(Math.floor(msLeft / 1000));
+                }
+                setLoading(false);
+                return;
+              }
+            }
+          }
+        }
+
+        // 2. Serverda faol urinish bormi? (Resume oqimi — Section 8.5)
+        if (user) {
+          try {
+            const activeRes = await authFetch(`/api/attempts/active/${quizId}`);
+            if (activeRes.ok) {
+              const activeData = await activeRes.json();
+              if (activeData.hasActive && activeData.attempt) {
+                setCurrentAttemptId(activeData.attempt.id);
+                if (activeData.attempt.mode) setMode(activeData.attempt.mode);
+                if (activeData.attempt.time_spent_seconds) setTimeSpent(activeData.attempt.time_spent_seconds);
+
+                if (activeData.questions) {
+                  const resumedQuiz: QuizData = {
+                    title: activeData.attempt.quiz_title || 'Test',
+                    questions: activeData.questions
+                  };
+                  setQuiz(resumedQuiz);
+                  setAnswers(activeData.attempt.answers_given || new Array(activeData.questions.length).fill(-1));
+                  setFlagged(new Array(activeData.questions.length).fill(false));
+
+                  if (activeData.attempt.deadline_at) {
+                    const msLeft = new Date(activeData.attempt.deadline_at).getTime() - Date.now();
+                    if (msLeft > 0) setTimeLeft(Math.floor(msLeft / 1000));
+                  }
+                  setLoading(false);
+                  return;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("Active attempt check fallback:", e);
+          }
+        }
+
+        // 3. Yangi server urinishi yaratish (Section 8.5: serverda savollar aralashmasi va deadline belgilanadi)
+        const initialMode = urlMode === 'study' ? 'study' : urlMode === 'retry_wrong' ? 'retry_wrong' : 'exam';
+        try {
+          const createRes = await authFetch('/api/attempts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ quizId, mode: initialMode })
+          });
+          if (createRes.ok) {
+            const createData = await createRes.json();
+            if (createData.attempt && createData.questions) {
+              setCurrentAttemptId(createData.attempt.id);
+              setMode(createData.attempt.mode || initialMode);
+              const newQuiz: QuizData = {
+                title: createData.attempt.quiz_title || 'Test',
+                time_limit_minutes: createData.attempt.time_limit_minutes,
+                questions: createData.questions
+              };
+              setQuiz(newQuiz);
+              setAnswers(new Array(createData.questions.length).fill(-1));
+              setFlagged(new Array(createData.questions.length).fill(false));
+
+              if (createData.attempt.deadline_at) {
+                const msLeft = new Date(createData.attempt.deadline_at).getTime() - Date.now();
+                if (msLeft > 0) setTimeLeft(Math.floor(msLeft / 1000));
+              } else if (createData.attempt.time_limit_minutes > 0) {
+                setTimeLeft(createData.attempt.time_limit_minutes * 60);
+              }
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (e) {
+          console.warn("Server attempt creation fallback to legacy getQuiz:", e);
+        }
+
+        // 4. Standart / fallback yuklash
+        const queryParam = initialMode === 'study' ? '?mode=study' : '';
         const res = await fetch(`/api/quizzes/${quizId}${queryParam}`);
         if (res.ok) {
           const data = await res.json();
@@ -126,7 +236,7 @@ export default function Quiz() {
     return () => clearInterval(interval);
   }, [loading, quiz]);
 
-  const handleSelectOption = (optionIndex: number) => {
+  const handleSelectOption = async (optionIndex: number) => {
     if (mode === 'study' && answers[currentIndex] !== -1) return;
 
     const newAnswers = [...answers];
@@ -138,6 +248,42 @@ export default function Quiz() {
       try {
         (window.Telegram.WebApp as any).HapticFeedback.selectionChanged();
       } catch {}
+    }
+
+    // O'rganish rejimida serverdan darhol javob va tushuntirish tekshiruvi (Section 8.5)
+    if (mode === 'study' && currentAttemptId) {
+      try {
+        const res = await authFetch(`/api/attempts/${currentAttemptId}/answer`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ questionIndex: currentIndex, chosenOption: optionIndex })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setStudyFeedback(prev => ({
+            ...prev,
+            [currentIndex]: {
+              isCorrect: data.isCorrect,
+              correctAnswer: data.correctAnswer,
+              explanation: data.explanation
+            }
+          }));
+        }
+      } catch (e) {
+        console.warn("Study mode answer check fallback:", e);
+      }
+    }
+
+    // Serverga oraliq saqlash (batch/progress saqlash — Section 8.5)
+    if (currentAttemptId) {
+      authFetch(`/api/attempts/${currentAttemptId}/answers`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          answersGiven: newAnswers,
+          timeSpentSeconds: timeSpentRef.current
+        })
+      }).catch(() => {});
     }
   };
 
@@ -190,7 +336,7 @@ export default function Quiz() {
     setShowConfirmShuffle(false);
   };
 
-  // Testni serverga yuborish (S10: ball serverda hisoblanadi)
+  // Testni serverga yuborish (S10: ball serverda hisoblanadi, Section 8.5: finishAttempt)
   const submitQuizInternal = async () => {
     const currentQuiz = quizRef.current;
     if (!currentQuiz || !quizId) return;
@@ -200,27 +346,51 @@ export default function Quiz() {
       const currentAnswers = answersRef.current;
       const currentTimeSpent = timeSpentRef.current;
 
-      const attemptPayload = {
-        quizId: quizId,
-        timeSpentSeconds: currentTimeSpent,
-        answersGiven: currentAnswers
-      };
+      let resultId = currentAttemptId || '';
 
-      let resultId = '';
-
-      try {
-        const res = await authFetch('/api/attempts', {
-          method: 'POST',
-          body: JSON.stringify(attemptPayload)
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.attempt?.id) {
-            resultId = data.attempt.id;
+      // Agar server urinishi mavjud bo'lsa, finish endpointini chaqiramiz
+      if (currentAttemptId) {
+        try {
+          const res = await authFetch(`/api/attempts/${currentAttemptId}/finish`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              answersGiven: currentAnswers,
+              timeSpentSeconds: currentTimeSpent
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.attempt?.id) {
+              resultId = data.attempt.id;
+            }
           }
+        } catch (beErr) {
+          console.warn("Backend finish attempt error:", beErr);
         }
-      } catch (beErr) {
-        console.warn("Backend save attempt fallback:", beErr);
+      }
+
+      // Agar urinish hali yaratilmagan bo'lsa (masalan offline fallback), eski POST /api/attempts orqali yuboramiz
+      if (!resultId) {
+        try {
+          const res = await authFetch('/api/attempts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              quizId,
+              timeSpentSeconds: currentTimeSpent,
+              answersGiven: currentAnswers
+            })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.attempt?.id) {
+              resultId = data.attempt.id;
+            }
+          }
+        } catch (beErr) {
+          console.warn("Legacy save attempt fallback:", beErr);
+        }
       }
 
       // Offline / LocalStorage fallback
@@ -394,7 +564,9 @@ export default function Quiz() {
             {currentQuestion.options.map((option, idx) => {
               const hasAnswered = answers[currentIndex] !== -1;
               const isSelected = answers[currentIndex] === idx;
-              const isCorrect = currentQuestion.correctAnswer !== undefined && currentQuestion.correctAnswer === idx;
+              const feedback = studyFeedback[currentIndex];
+              const effectiveCorrect = feedback ? feedback.correctAnswer : currentQuestion.correctAnswer;
+              const isCorrect = effectiveCorrect !== undefined && effectiveCorrect === idx;
 
               let cardStyle = "border-white/10 bg-white/[0.03] hover:border-blue-500/40 hover:bg-white/[0.06]";
               let letterStyle = "bg-white/5 text-slate-300 border-white/10 group-hover:border-blue-500/40 group-hover:text-blue-400";
@@ -458,6 +630,14 @@ export default function Quiz() {
               );
             })}
           </div>
+
+          {/* O'rganish rejimida tushuntirish va izoh (Section 8.5) */}
+          {mode === 'study' && answers[currentIndex] !== -1 && studyFeedback[currentIndex]?.explanation && (
+            <div className="mt-5 p-4 rounded-2xl bg-blue-500/10 border border-blue-500/25 text-xs text-blue-200 leading-relaxed animate-in fade-in duration-200">
+              <strong className="text-blue-300 font-bold block mb-1">💡 Tushuntirish:</strong>
+              {studyFeedback[currentIndex].explanation}
+            </div>
+          )}
         </div>
 
         {/* Footer */}

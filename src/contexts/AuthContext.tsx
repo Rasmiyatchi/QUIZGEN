@@ -24,6 +24,8 @@ export interface AppUser {
   photoURL?: string;
   authType: 'telegram' | 'tma' | 'demo' | 'widget';
   role?: 'student' | 'teacher' | 'admin' | 'superadmin';
+  streak_days?: number;
+  xp?: number;
 }
 
 interface AuthContextType {

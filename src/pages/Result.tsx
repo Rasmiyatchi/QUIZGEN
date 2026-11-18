@@ -37,13 +37,14 @@ interface QuizData {
 export default function Result() {
   const { resultId } = useParams();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, authFetch } = useAuth();
   
   const [result, setResult] = useState<ResultData | null>(null);
   const [quiz, setQuiz] = useState<QuizData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -199,25 +200,37 @@ export default function Result() {
 
   const rank = getRankBadge();
 
-  // Faqat xatolarni qayta ishlash
-  const retakeWrongQuestions = () => {
-    const wrongQuestions = quiz.questions.filter((q, idx) => rawAnswers[idx] !== q.correctAnswer);
-    if (wrongQuestions.length === 0) {
-      alert("Siz barcha savollarga to'g'ri javob bergansiz!");
-      return;
+  // Faqat xatolarni qayta ishlash (M5 — Server nazoratidagi retry_wrong urinishi)
+  const retakeWrongQuestions = async () => {
+    if (!quiz || !result) return;
+    const targetQuizId = result.quizId || (result as any).quiz_id;
+    if (!targetQuizId) return;
+
+    setRetrying(true);
+    try {
+      const res = await authFetch('/api/attempts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quizId: targetQuizId,
+          mode: 'retry_wrong',
+          retryWrongFromAttemptId: result.id
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.attempt?.id) {
+          navigate(`/quiz/${targetQuizId}?mode=retry_wrong&attemptId=${data.attempt.id}`);
+          return;
+        }
+      }
+      navigate(`/quiz/${targetQuizId}?mode=retry_wrong`);
+    } catch (e) {
+      console.error("Retry wrong questions error:", e);
+      navigate(`/quiz/${targetQuizId}?mode=retry_wrong`);
+    } finally {
+      setRetrying(false);
     }
-
-    const retryQuizId = 'retry_' + Math.random().toString(36).substring(7);
-    const retryQuiz = {
-      id: retryQuizId,
-      userId: user?.uid,
-      title: `${quiz.title} (Xatolar ustida ishlash)`,
-      questions: wrongQuestions,
-      createdAt: new Date().toISOString()
-    };
-
-    localStorage.setItem(`quiz_${retryQuizId}`, JSON.stringify(retryQuiz));
-    navigate(`/quiz/${retryQuizId}`);
   };
 
   const handleShare = () => {
@@ -346,9 +359,11 @@ export default function Result() {
           {incorrectCount > 0 && (
             <button 
               onClick={retakeWrongQuestions}
-              className="w-full sm:w-auto px-6 py-3.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all"
+              disabled={retrying}
+              className="w-full sm:w-auto px-6 py-3.5 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/30 rounded-2xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-2 transition-all disabled:opacity-50"
             >
-              <RotateCcw className="w-4 h-4 text-amber-400" /> Faqat Xatolarni Qaytarish ({incorrectCount})
+              {retrying ? <Loader2 className="w-4 h-4 text-amber-400 animate-spin" /> : <RotateCcw className="w-4 h-4 text-amber-400" />}
+              Faqat Xatolarni Qaytarish ({incorrectCount})
             </button>
           )}
 

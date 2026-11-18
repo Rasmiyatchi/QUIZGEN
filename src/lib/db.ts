@@ -16,6 +16,9 @@ export interface UserRecord {
   subscription_expires_at?: number; // ms timestamp
   ai_tests_today?: number;
   last_ai_date?: string;
+  streak_days?: number;
+  streak_updated_on?: string; // YYYY-MM-DD
+  xp?: number;
   created_at?: string;
 }
 
@@ -96,12 +99,18 @@ export interface AttemptRecord {
   id: string;
   user_id: string;
   quiz_id: string;
+  mode?: 'study' | 'exam' | 'retry_wrong';
+  status?: 'in_progress' | 'completed' | 'expired';
+  started_at?: string;
+  deadline_at?: string;
+  completed_at?: string;
   score: number;
   total: number;
   percentage: number;
   time_spent_seconds: number;
-  answers_given: number[];
-  completed_at?: string;
+  answers_given: (number | null)[];
+  question_order?: number[];
+  wrong_questions?: any[];
   quiz_title?: string;
 }
 
@@ -223,6 +232,12 @@ export function initDatabase() {
         percentage REAL NOT NULL,
         time_spent_seconds INTEGER DEFAULT 0,
         answers_given TEXT NOT NULL,
+        mode TEXT DEFAULT 'exam',
+        status TEXT DEFAULT 'completed',
+        started_at TEXT DEFAULT (datetime('now')),
+        deadline_at TEXT DEFAULT NULL,
+        question_order TEXT DEFAULT NULL,
+        wrong_questions TEXT DEFAULT NULL,
         completed_at TEXT DEFAULT (datetime('now')),
         FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (quiz_id) REFERENCES quizzes(id)
@@ -349,6 +364,33 @@ export function initDatabase() {
       } catch (e) {}
     }
 
+    // Urinishlar jadvaliga rejim, holat va taymer ustunlarini qo'shish (M5)
+    const attemptCols = [
+      'mode TEXT DEFAULT "exam"',
+      'status TEXT DEFAULT "completed"',
+      'started_at TEXT DEFAULT NULL',
+      'deadline_at TEXT DEFAULT NULL',
+      'question_order TEXT DEFAULT NULL',
+      'wrong_questions TEXT DEFAULT NULL'
+    ];
+    for (const col of attemptCols) {
+      try {
+        dbInstance.exec(`ALTER TABLE attempts ADD COLUMN ${col}`);
+      } catch (e) {}
+    }
+
+    // Foydalanuvchilarga streak va XP ustunlarini qo'shish (M5)
+    const gamificationCols = [
+      'streak_days INTEGER DEFAULT 0',
+      'streak_updated_on TEXT DEFAULT NULL',
+      'xp INTEGER DEFAULT 0'
+    ];
+    for (const col of gamificationCols) {
+      try {
+        dbInstance.exec(`ALTER TABLE users ADD COLUMN ${col}`);
+      } catch (e) {}
+    }
+
     console.log("SQLite ma'lumotlar bazasi muvaffaqiyatli ulandi: " + SQLITE_DB_FILE);
   } catch (err) {
     console.warn("node:sqlite xatosi, JSON fallback faollashtirildi:", err);
@@ -443,7 +485,7 @@ export function createQuiz(quiz: QuizRecord, questions: QuestionRecord[]): QuizR
   `);
 
   questions.forEach((q, idx) => {
-    const qId = q.id || `${quizId}_q${idx + 1}`;
+    const qId = `${quizId}_q${idx + 1}_${generateId().substring(0, 6)}`;
     insertQuestion.run(
       qId,
       quizId,
@@ -605,15 +647,19 @@ export function deleteQuiz(id: string, userId: string): boolean {
 
 // 3. NATIJALAR / URINISHLAR (Attempts)
 export function saveAttempt(attempt: AttemptRecord): AttemptRecord {
-  const attemptId = attempt.id || Math.random().toString(36).substring(7);
+  const attemptId = attempt.id || generateId();
+  const mode = attempt.mode || 'exam';
+  const status = attempt.status || 'completed';
 
   if (useJsonFallback || !dbInstance) {
     const q = memoryStore.quizzes[attempt.quiz_id];
-    const record = {
+    const record: AttemptRecord = {
       ...attempt,
       id: attemptId,
+      mode,
+      status,
       quiz_title: q ? q.title : undefined,
-      completed_at: new Date().toISOString()
+      completed_at: attempt.completed_at || new Date().toISOString()
     };
     memoryStore.attempts[attemptId] = record;
     saveJsonStore();
@@ -621,8 +667,11 @@ export function saveAttempt(attempt: AttemptRecord): AttemptRecord {
   }
 
   const stmt = dbInstance.prepare(`
-    INSERT INTO attempts (id, user_id, quiz_id, score, total, percentage, time_spent_seconds, answers_given, completed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO attempts (
+      id, user_id, quiz_id, score, total, percentage, time_spent_seconds,
+      answers_given, mode, status, completed_at, wrong_questions, question_order
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?)
   `);
   stmt.run(
     attemptId,
@@ -632,10 +681,81 @@ export function saveAttempt(attempt: AttemptRecord): AttemptRecord {
     attempt.total,
     attempt.percentage,
     attempt.time_spent_seconds || 0,
-    JSON.stringify(attempt.answers_given)
+    JSON.stringify(attempt.answers_given),
+    mode,
+    status,
+    attempt.wrong_questions ? JSON.stringify(attempt.wrong_questions) : null,
+    attempt.question_order ? JSON.stringify(attempt.question_order) : null
   );
 
   return getAttempt(attemptId) || attempt;
+}
+
+export function createAttempt(data: {
+  id?: string;
+  user_id: string;
+  quiz_id: string;
+  mode?: 'study' | 'exam' | 'retry_wrong';
+  total: number;
+  time_limit_minutes?: number;
+  question_order?: number[];
+  initial_answers?: (number | null)[];
+}): AttemptRecord {
+  const attemptId = data.id || generateId();
+  const mode = data.mode || 'exam';
+  const initialAnswers = data.initial_answers || new Array(data.total).fill(-1);
+  const now = new Date();
+  const startedAt = now.toISOString();
+  let deadlineAt: string | null = null;
+
+  if (data.time_limit_minutes && data.time_limit_minutes > 0 && mode === 'exam') {
+    const deadline = new Date(now.getTime() + data.time_limit_minutes * 60 * 1000);
+    deadlineAt = deadline.toISOString();
+  }
+
+  if (useJsonFallback || !dbInstance) {
+    const q = memoryStore.quizzes[data.quiz_id];
+    const record: AttemptRecord = {
+      id: attemptId,
+      user_id: data.user_id,
+      quiz_id: data.quiz_id,
+      mode,
+      status: 'in_progress',
+      started_at: startedAt,
+      deadline_at: deadlineAt || undefined,
+      score: 0,
+      total: data.total,
+      percentage: 0,
+      time_spent_seconds: 0,
+      answers_given: initialAnswers,
+      question_order: data.question_order,
+      quiz_title: q ? q.title : undefined
+    };
+    memoryStore.attempts[attemptId] = record;
+    saveJsonStore();
+    return record;
+  }
+
+  const stmt = dbInstance.prepare(`
+    INSERT INTO attempts (
+      id, user_id, quiz_id, mode, status, started_at, deadline_at,
+      score, total, percentage, time_spent_seconds, answers_given, question_order
+    )
+    VALUES (?, ?, ?, ?, 'in_progress', datetime('now'), ?, 0, ?, 0, 0, ?, ?)
+  `);
+
+  stmt.run(
+    attemptId,
+    data.user_id,
+    data.quiz_id,
+    mode,
+    deadlineAt,
+    data.total,
+    JSON.stringify(initialAnswers),
+    data.question_order ? JSON.stringify(data.question_order) : null
+  );
+
+  return getAttempt(attemptId)!;
 }
 
 export function getAttempt(id: string): AttemptRecord | null {
@@ -656,21 +776,143 @@ export function getAttempt(id: string): AttemptRecord | null {
     id: row.id,
     user_id: row.user_id,
     quiz_id: row.quiz_id,
+    mode: row.mode || 'exam',
+    status: row.status || 'completed',
+    started_at: row.started_at,
+    deadline_at: row.deadline_at,
+    completed_at: row.completed_at,
     score: row.score,
     total: row.total,
     percentage: row.percentage,
     time_spent_seconds: row.time_spent_seconds,
     answers_given: typeof row.answers_given === 'string' ? JSON.parse(row.answers_given) : row.answers_given,
-    completed_at: row.completed_at,
+    question_order: row.question_order ? (typeof row.question_order === 'string' ? JSON.parse(row.question_order) : row.question_order) : undefined,
+    wrong_questions: row.wrong_questions ? (typeof row.wrong_questions === 'string' ? JSON.parse(row.wrong_questions) : row.wrong_questions) : undefined,
     quiz_title: row.quiz_title
   };
+}
+
+export function getActiveAttempt(userId: string, quizId: string): AttemptRecord | null {
+  if (useJsonFallback || !dbInstance) {
+    const found = Object.values(memoryStore.attempts).find(
+      a => a.user_id === userId && a.quiz_id === quizId && a.status === 'in_progress'
+    );
+    return found || null;
+  }
+
+  const row = dbInstance.prepare(`
+    SELECT a.*, q.title as quiz_title
+    FROM attempts a
+    LEFT JOIN quizzes q ON a.quiz_id = q.id
+    WHERE a.user_id = ? AND a.quiz_id = ? AND a.status = 'in_progress'
+    ORDER BY a.started_at DESC LIMIT 1
+  `).get(userId, quizId) as any;
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    quiz_id: row.quiz_id,
+    mode: row.mode || 'exam',
+    status: row.status,
+    started_at: row.started_at,
+    deadline_at: row.deadline_at,
+    completed_at: row.completed_at,
+    score: row.score,
+    total: row.total,
+    percentage: row.percentage,
+    time_spent_seconds: row.time_spent_seconds,
+    answers_given: typeof row.answers_given === 'string' ? JSON.parse(row.answers_given) : row.answers_given,
+    question_order: row.question_order ? (typeof row.question_order === 'string' ? JSON.parse(row.question_order) : row.question_order) : undefined,
+    wrong_questions: row.wrong_questions ? (typeof row.wrong_questions === 'string' ? JSON.parse(row.wrong_questions) : row.wrong_questions) : undefined,
+    quiz_title: row.quiz_title
+  };
+}
+
+export function updateAttemptAnswers(id: string, answers: (number | null)[], timeSpentSeconds?: number): boolean {
+  if (useJsonFallback || !dbInstance) {
+    const a = memoryStore.attempts[id];
+    if (!a) return false;
+    a.answers_given = answers;
+    if (typeof timeSpentSeconds === 'number') {
+      a.time_spent_seconds = timeSpentSeconds;
+    }
+    saveJsonStore();
+    return true;
+  }
+
+  let stmt;
+  if (typeof timeSpentSeconds === 'number') {
+    stmt = dbInstance.prepare(`
+      UPDATE attempts 
+      SET answers_given = ?, time_spent_seconds = ?
+      WHERE id = ? AND status = 'in_progress'
+    `);
+    const res = stmt.run(JSON.stringify(answers), timeSpentSeconds, id);
+    return res.changes > 0;
+  } else {
+    stmt = dbInstance.prepare(`
+      UPDATE attempts 
+      SET answers_given = ?
+      WHERE id = ? AND status = 'in_progress'
+    `);
+    const res = stmt.run(JSON.stringify(answers), id);
+    return res.changes > 0;
+  }
+}
+
+export function finishAttempt(id: string, updates: {
+  score: number;
+  total: number;
+  percentage: number;
+  time_spent_seconds: number;
+  answers_given: (number | null)[];
+  wrong_questions?: any[];
+  status?: 'completed' | 'expired';
+}): AttemptRecord | null {
+  const status = updates.status || 'completed';
+
+  if (useJsonFallback || !dbInstance) {
+    const a = memoryStore.attempts[id];
+    if (!a) return null;
+    a.score = updates.score;
+    a.total = updates.total;
+    a.percentage = updates.percentage;
+    a.time_spent_seconds = updates.time_spent_seconds;
+    a.answers_given = updates.answers_given;
+    a.wrong_questions = updates.wrong_questions;
+    a.status = status;
+    a.completed_at = new Date().toISOString();
+    saveJsonStore();
+    return a;
+  }
+
+  const stmt = dbInstance.prepare(`
+    UPDATE attempts
+    SET score = ?, total = ?, percentage = ?, time_spent_seconds = ?,
+        answers_given = ?, wrong_questions = ?, status = ?, completed_at = datetime('now')
+    WHERE id = ?
+  `);
+
+  stmt.run(
+    updates.score,
+    updates.total,
+    updates.percentage,
+    updates.time_spent_seconds,
+    JSON.stringify(updates.answers_given),
+    updates.wrong_questions ? JSON.stringify(updates.wrong_questions) : null,
+    status,
+    id
+  );
+
+  return getAttempt(id);
 }
 
 export function getUserAttempts(userId: string): AttemptRecord[] {
   if (useJsonFallback || !dbInstance) {
     return Object.values(memoryStore.attempts)
       .filter(a => a.user_id === userId)
-      .sort((a, b) => (b.completed_at || '').localeCompare(a.completed_at || ''));
+      .sort((a, b) => (b.completed_at || b.started_at || '').localeCompare(a.completed_at || a.started_at || ''));
   }
 
   const rows = dbInstance.prepare(`
@@ -678,20 +920,184 @@ export function getUserAttempts(userId: string): AttemptRecord[] {
     FROM attempts a
     LEFT JOIN quizzes q ON a.quiz_id = q.id
     WHERE a.user_id = ?
-    ORDER BY a.completed_at DESC
+    ORDER BY COALESCE(a.completed_at, a.started_at) DESC
   `).all(userId) as any[];
 
   return rows.map(r => ({
     id: r.id,
     user_id: r.user_id,
     quiz_id: r.quiz_id,
+    mode: r.mode || 'exam',
+    status: r.status || 'completed',
+    started_at: r.started_at,
+    deadline_at: r.deadline_at,
+    completed_at: r.completed_at,
     score: r.score,
     total: r.total,
     percentage: r.percentage,
     time_spent_seconds: r.time_spent_seconds,
     answers_given: typeof r.answers_given === 'string' ? JSON.parse(r.answers_given) : r.answers_given,
-    completed_at: r.completed_at,
+    question_order: r.question_order ? (typeof r.question_order === 'string' ? JSON.parse(r.question_order) : r.question_order) : undefined,
+    wrong_questions: r.wrong_questions ? (typeof r.wrong_questions === 'string' ? JSON.parse(r.wrong_questions) : r.wrong_questions) : undefined,
     quiz_title: r.quiz_title
+  }));
+}
+
+export function updateUserGamification(userId: string, xpEarned: number): {
+  streak_days: number;
+  xp: number;
+  streak_extended: boolean;
+} {
+  const user = getUser(userId);
+  if (!user) {
+    return { streak_days: 0, xp: xpEarned, streak_extended: false };
+  }
+
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const yesterdayDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const yesterday = yesterdayDate.toISOString().slice(0, 10);
+
+  let currentStreak = user.streak_days || 0;
+  let streakExtended = false;
+
+  if (user.streak_updated_on === today) {
+    // Bugun allaqachon streak yangilangan
+  } else if (user.streak_updated_on === yesterday) {
+    currentStreak += 1;
+    streakExtended = true;
+  } else {
+    currentStreak = 1;
+    streakExtended = true;
+  }
+
+  const newXp = (user.xp || 0) + xpEarned;
+
+  if (useJsonFallback || !dbInstance) {
+    if (memoryStore.users[userId]) {
+      memoryStore.users[userId].streak_days = currentStreak;
+      memoryStore.users[userId].streak_updated_on = today;
+      memoryStore.users[userId].xp = newXp;
+      saveJsonStore();
+    }
+  } else {
+    dbInstance.prepare(`
+      UPDATE users 
+      SET streak_days = ?, streak_updated_on = ?, xp = ?
+      WHERE id = ?
+    `).run(currentStreak, today, newXp, userId);
+  }
+
+  return {
+    streak_days: currentStreak,
+    xp: newXp,
+    streak_extended: streakExtended
+  };
+}
+
+export function getUserStats(userId: string) {
+  const user = getUser(userId);
+  const userAttempts = getUserAttempts(userId);
+  const completedAttempts = userAttempts.filter(a => a.status === 'completed' || !a.status);
+  
+  const totalAttempts = completedAttempts.length;
+  const totalScore = completedAttempts.reduce((sum, a) => sum + (a.percentage || 0), 0);
+  const avgPercentage = totalAttempts > 0 ? Math.round(totalScore / totalAttempts) : 0;
+  const bestScore = completedAttempts.reduce((max, a) => Math.max(max, a.percentage || 0), 0);
+
+  let quizzesCreated = 0;
+  if (useJsonFallback || !dbInstance) {
+    quizzesCreated = Object.values(memoryStore.quizzes).filter(q => q.user_id === userId).length;
+  } else {
+    const row = dbInstance.prepare('SELECT COUNT(*) as count FROM quizzes WHERE user_id = ?').get(userId) as any;
+    quizzesCreated = row ? row.count : 0;
+  }
+
+  const xp = user?.xp || 0;
+  const streakDays = user?.streak_days || 0;
+
+  let rankTitle = 'Yangi talaba';
+  let rankLevel = 1;
+  let nextLevelXp = 100;
+
+  if (xp >= 3000) {
+    rankTitle = 'Grand Master';
+    rankLevel = 6;
+    nextLevelXp = 5000;
+  } else if (xp >= 1500) {
+    rankTitle = 'Usta (Master)';
+    rankLevel = 5;
+    nextLevelXp = 3000;
+  } else if (xp >= 700) {
+    rankTitle = 'Bilimdon';
+    rankLevel = 4;
+    nextLevelXp = 1500;
+  } else if (xp >= 300) {
+    rankTitle = 'Faol talaba';
+    rankLevel = 3;
+    nextLevelXp = 700;
+  } else if (xp >= 100) {
+    rankTitle = 'Izlanuvchi';
+    rankLevel = 2;
+    nextLevelXp = 300;
+  }
+
+  return {
+    total_attempts: totalAttempts,
+    total_quizzes_created: quizzesCreated,
+    avg_percentage: avgPercentage,
+    best_score: bestScore,
+    streak_days: streakDays,
+    xp,
+    rank_title: rankTitle,
+    rank_level: rankLevel,
+    next_level_xp: nextLevelXp,
+    recent_attempts: completedAttempts.slice(0, 10)
+  };
+}
+
+export function getQuizLeaderboard(quizId: string, limit = 10) {
+  if (useJsonFallback || !dbInstance) {
+    const list = Object.values(memoryStore.attempts)
+      .filter(a => a.quiz_id === quizId && (a.status === 'completed' || !a.status))
+      .sort((a, b) => b.percentage - a.percentage || a.time_spent_seconds - b.time_spent_seconds)
+      .slice(0, limit);
+
+    return list.map(a => {
+      const u = memoryStore.users[a.user_id];
+      return {
+        user_id: a.user_id,
+        first_name: u?.first_name || 'Foydalanuvchi',
+        username: u?.username,
+        photo_url: u?.photo_url,
+        score: a.score,
+        total: a.total,
+        percentage: a.percentage,
+        time_spent_seconds: a.time_spent_seconds,
+        completed_at: a.completed_at || ''
+      };
+    });
+  }
+
+  const rows = dbInstance.prepare(`
+    SELECT a.user_id, a.score, a.total, a.percentage, a.time_spent_seconds, a.completed_at,
+           u.first_name, u.username, u.photo_url
+    FROM attempts a
+    LEFT JOIN users u ON a.user_id = u.id
+    WHERE a.quiz_id = ? AND (a.status = 'completed' OR a.status IS NULL)
+    ORDER BY a.percentage DESC, a.time_spent_seconds ASC
+    LIMIT ?
+  `).all(quizId, limit) as any[];
+
+  return rows.map(r => ({
+    user_id: r.user_id,
+    first_name: r.first_name || 'Talaba',
+    username: r.username,
+    photo_url: r.photo_url,
+    score: r.score,
+    total: r.total,
+    percentage: r.percentage,
+    time_spent_seconds: r.time_spent_seconds,
+    completed_at: r.completed_at
   }));
 }
 

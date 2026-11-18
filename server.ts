@@ -44,6 +44,14 @@ import {
   saveAttempt, 
   getAttempt, 
   getUserAttempts,
+  createAttempt,
+  getActiveAttempt,
+  updateAttemptAnswers,
+  finishAttempt,
+  getUserStats,
+  getQuizLeaderboard,
+  updateUserGamification,
+  getQuizQuestions,
   PRICING_PLANS,
   createOrder,
   getOrder,
@@ -334,6 +342,8 @@ async function startServer() {
           username: user.username,
           photoURL: user.photo_url,
           role: isAdmin ? 'admin' : (user.role || 'student'),
+          streak_days: user.streak_days || 0,
+          xp: user.xp || 0,
           authType: 'tma'
         },
         accessToken,
@@ -393,6 +403,8 @@ async function startServer() {
           username: user.username,
           photoURL: user.photo_url,
           role: isAdmin ? 'admin' : (user.role || 'student'),
+          streak_days: user.streak_days || 0,
+          xp: user.xp || 0,
           authType: 'widget'
         },
         accessToken,
@@ -540,6 +552,8 @@ async function startServer() {
         username: user.username,
         photoURL: user.photo_url,
         role,
+        streak_days: user.streak_days || 0,
+        xp: user.xp || 0,
         authType: 'telegram'
       },
       subscription: sub
@@ -1175,99 +1189,427 @@ correctAnswer - bu to'g'ri javobning options massividagi 0 dan boshlanuvchi inde
   });
 
   // ===================================================
-  // 6. NATIJALAR (Attempts)
-  // S10 fix: ball server tomonida tekshiriladi
+  // 6. NATIJALAR VA SERVER URINISHLARI (M5 — Attempts & Test Taking)
+  // S10: ball serverda hisoblanadi, to'g'ri javoblar tarmoqqa sizmaydi
+  // 8.5: server urinishlari (create, active, batch answers, study answer, finish)
   // ===================================================
 
-  // Natijani saqlash — server tomonida ball tekshiruvi (S10)
+  // 6.1. Urinish yaratish yoki tugallangan natijani saqlash (POST /api/attempts)
   app.post('/api/attempts', optionalAuth, (req, res) => {
     try {
-      const { quizId, timeSpentSeconds, answersGiven } = req.body;
-      
-      if (!quizId || !answersGiven) {
-        return res.status(400).json({ error: "quizId va answersGiven talab qilinadi." });
+      const { quizId, mode, retryWrongFromAttemptId, timeSpentSeconds, answersGiven } = req.body;
+
+      if (!quizId) {
+        return res.status(400).json({ error: "quizId talab qilinadi." });
       }
 
-      // S10 — Testni to'g'ri javoblar bilan olamiz (klientga yuborilmaydi)
-      const quizWithAnswers = getQuizWithAnswers(quizId);
-      if (!quizWithAnswers) {
-        return res.status(404).json({ error: "Test topilmadi." });
-      }
-
-      // S10 — Server tomonida ball hisobi
-      let score = 0;
-      const total = quizWithAnswers.questions?.length || 0;
-      const serverAnswers: number[] = [];
-
-      if (Array.isArray(answersGiven) && quizWithAnswers.questions) {
-        quizWithAnswers.questions.forEach((q, idx) => {
-          const clientAnswer = answersGiven[idx];
-          serverAnswers.push(typeof clientAnswer === 'number' ? clientAnswer : -1);
-          if (clientAnswer === q.correctAnswer) {
-            score++;
-          }
-        });
-      }
-
-      const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
       const userId = req.user ? req.user.uid : 'anonymous';
 
-      const attempt = saveAttempt({
-        id: generateId(),
-        user_id: userId,
-        quiz_id: quizId,
-        score,
-        total,
-        percentage,
-        time_spent_seconds: timeSpentSeconds || 0,
-        answers_given: serverAnswers
-      });
+      // Qadimgi v2 format bilan moslik: agar bevosita answersGiven yuborilgan bo'lsa
+      if (Array.isArray(answersGiven)) {
+        const quizWithAnswers = getQuizWithAnswers(quizId);
+        if (!quizWithAnswers) {
+          return res.status(404).json({ error: "Test topilmadi." });
+        }
 
-      // Telegram xabar (S12: HTML escape)
-      if (telegramBotToken && req.user && !req.user.uid.startsWith('demo_') && !req.user.uid.startsWith('guest_')) {
-        const quizTitle = escapeHtml(quizWithAnswers.title || 'Test');
-        const mins = Math.floor((timeSpentSeconds || 0) / 60);
-        const secs = (timeSpentSeconds || 0) % 60;
-        const msg = `📊 <b>Yangi Test Natijasi!</b>\n\n` +
-          `📖 <b>Test:</b> ${quizTitle}\n` +
-          `🎯 <b>Natija:</b> ${score} / ${total} (${percentage}%)\n` +
-          `⏱ <b>Sarflangan vaqt:</b> ${mins}m ${secs}s\n\n` +
-          `${percentage >= 60 ? "🎉 Tabriklaymiz, muvaffaqiyatli topshirdingiz!" : "📚 Ko'proq shug'ullanish tavsiya etiladi."}`;
-        sendTelegramMessage(telegramBotToken, req.user.uid, msg);
+        let score = 0;
+        const total = quizWithAnswers.questions?.length || 0;
+        const serverAnswers: number[] = [];
+        const wrongQuestionsList: any[] = [];
+
+        if (quizWithAnswers.questions) {
+          quizWithAnswers.questions.forEach((q, idx) => {
+            const clientAnswer = answersGiven[idx];
+            serverAnswers.push(typeof clientAnswer === 'number' ? clientAnswer : -1);
+            if (clientAnswer === q.correctAnswer) {
+              score++;
+            } else {
+              wrongQuestionsList.push({
+                index: idx,
+                question: q.question,
+                options: q.options,
+                userAnswer: clientAnswer,
+                correctAnswer: q.correctAnswer,
+                explanation: q.explanation
+              });
+            }
+          });
+        }
+
+        const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
+        const attempt = saveAttempt({
+          id: generateId(),
+          user_id: userId,
+          quiz_id: quizId,
+          mode: mode || 'exam',
+          status: 'completed',
+          score,
+          total,
+          percentage,
+          time_spent_seconds: timeSpentSeconds || 0,
+          answers_given: serverAnswers,
+          wrong_questions: wrongQuestionsList
+        });
+
+        // Gamifikatsiya (XP va streak) yangilash
+        let gamification = null;
+        if (req.user && !req.user.uid.startsWith('demo_') && !req.user.uid.startsWith('guest_')) {
+          const xpEarned = 15 + (score * 5) + (percentage >= 80 ? 15 : 0) + (percentage === 100 ? 30 : 0);
+          gamification = updateUserGamification(userId, xpEarned);
+        }
+
+        // Telegram xabar (S12: HTML escape)
+        if (telegramBotToken && req.user && !req.user.uid.startsWith('demo_') && !req.user.uid.startsWith('guest_')) {
+          const quizTitle = escapeHtml(quizWithAnswers.title || 'Test');
+          const mins = Math.floor((timeSpentSeconds || 0) / 60);
+          const secs = (timeSpentSeconds || 0) % 60;
+          const msg = `📊 <b>Yangi Test Natijasi!</b>\n\n` +
+            `📖 <b>Test:</b> ${quizTitle}\n` +
+            `🎯 <b>Natija:</b> ${score} / ${total} (${percentage}%)\n` +
+            `⏱ <b>Sarflangan vaqt:</b> ${mins}m ${secs}s\n\n` +
+            `${percentage >= 60 ? "🎉 Tabriklaymiz, muvaffaqiyatli topshirdingiz!" : "📚 Ko'proq shug'ullanish tavsiya etiladi."}`;
+          sendTelegramMessage(telegramBotToken, req.user.uid, msg);
+        }
+
+        return res.json({ success: true, attempt, gamification });
       }
 
-      res.json({ success: true, attempt });
+      // Yangi v3 formati: Server nazoratidagi urinishni boshlash (Section 8.5)
+      const attemptMode = mode === 'study' ? 'study' : mode === 'retry_wrong' ? 'retry_wrong' : 'exam';
+      let questionsToUse: any[] = [];
+      let quizTitle = 'Test';
+      let timeLimit = 0;
+
+      // Agar xatolarni qayta ishlash rejimi bo'lsa
+      if (attemptMode === 'retry_wrong') {
+        let prevAttempt = null;
+        if (retryWrongFromAttemptId) {
+          prevAttempt = getAttempt(retryWrongFromAttemptId);
+        } else {
+          // Oxirgi yakunlangan urinishdan olish
+          const userAttempts = getUserAttempts(userId);
+          prevAttempt = userAttempts.find(a => a.quiz_id === quizId && a.wrong_questions && a.wrong_questions.length > 0);
+        }
+
+        if (prevAttempt && prevAttempt.wrong_questions && prevAttempt.wrong_questions.length > 0) {
+          questionsToUse = prevAttempt.wrong_questions.map((wq: any, idx: number) => ({
+            id: `retry_q_${idx}`,
+            quiz_id: quizId,
+            question: wq.question,
+            options: wq.options,
+            order_num: idx
+          }));
+          quizTitle = (prevAttempt.quiz_title || 'Test') + " (Xatolar ustida ishlash)";
+        }
+      }
+
+      // Agar oddiy rejim bo'lsa yoki xatolar topilmagan bo'lsa, asosiy testni yuklaymiz
+      if (questionsToUse.length === 0) {
+        const fullQuiz = getQuizWithAnswers(quizId);
+        if (!fullQuiz) {
+          return res.status(404).json({ error: "Test topilmadi." });
+        }
+        if (!fullQuiz.is_public && fullQuiz.user_id !== userId && req.user?.role !== 'admin' && req.user?.role !== 'superadmin') {
+          return res.status(403).json({ error: "Bu test yopiq." });
+        }
+        quizTitle = fullQuiz.title;
+        timeLimit = fullQuiz.time_limit_minutes || 0;
+        // Savollar to'g'ri javoblarsiz tozalanadi (S10)
+        questionsToUse = (fullQuiz.questions || []).map(q => ({
+          id: q.id,
+          quiz_id: q.quiz_id,
+          question: q.question,
+          options: q.options,
+          order_num: q.order_num
+        }));
+      }
+
+      const total = questionsToUse.length;
+      if (total === 0) {
+        return res.status(400).json({ error: "Testda savollar mavjud emas." });
+      }
+
+      const questionOrder = questionsToUse.map((_, idx) => idx);
+      const attempt = createAttempt({
+        user_id: userId,
+        quiz_id: quizId,
+        mode: attemptMode,
+        total,
+        time_limit_minutes: timeLimit,
+        question_order: questionOrder
+      });
+
+      res.json({
+        success: true,
+        attempt: {
+          id: attempt.id,
+          quiz_id: attempt.quiz_id,
+          mode: attempt.mode,
+          status: attempt.status,
+          started_at: attempt.started_at,
+          deadline_at: attempt.deadline_at,
+          total: attempt.total,
+          time_limit_minutes: timeLimit,
+          quiz_title: quizTitle
+        },
+        questions: questionsToUse
+      });
     } catch (err: any) {
-      console.error("Save attempt error:", err);
-      res.status(500).json({ error: err.message || "Natijani saqlashda xatolik" });
+      console.error("Create attempt error:", err);
+      res.status(500).json({ error: err.message || "Urinish yaratishda xatolik" });
     }
   });
 
-  // Natijani olish (S11: faqat egasi yoki admin ko'ra oladi)
+  // 6.2. Faol (davom etayotgan) urinishni tekshirish (Resume imkoniyati)
+  app.get('/api/attempts/active/:quizId', requireAuth, (req, res) => {
+    try {
+      const active = getActiveAttempt(req.user!.uid, req.params.quizId);
+      if (!active) {
+        return res.json({ success: true, hasActive: false });
+      }
+
+      // Agar vaqti tugagan bo'lsa avtomatik expired deb belgilash
+      if (active.deadline_at && new Date(active.deadline_at).getTime() < Date.now()) {
+        finishAttempt(active.id, {
+          score: active.score,
+          total: active.total,
+          percentage: active.percentage,
+          time_spent_seconds: active.time_spent_seconds,
+          answers_given: active.answers_given,
+          status: 'expired'
+        });
+        return res.json({ success: true, hasActive: false, message: "Avvalgi urinish vaqti tugagan." });
+      }
+
+      // To'g'ri javoblarsiz savollarni olamiz
+      const fullQuiz = getQuizWithAnswers(active.quiz_id);
+      const sanitizedQuestions = (fullQuiz?.questions || []).map(q => ({
+        id: q.id,
+        quiz_id: q.quiz_id,
+        question: q.question,
+        options: q.options,
+        order_num: q.order_num
+      }));
+
+      res.json({
+        success: true,
+        hasActive: true,
+        attempt: active,
+        questions: sanitizedQuestions
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 6.3. Javoblarni oraliq saqlash (Batch answers — progress yo'qolmasligi uchun)
+  app.put('/api/attempts/:id/answers', optionalAuth, (req, res) => {
+    try {
+      const attempt = getAttempt(req.params.id);
+      if (!attempt) {
+        return res.status(404).json({ error: "Urinish topilmadi." });
+      }
+
+      if (req.user && attempt.user_id !== 'anonymous' && attempt.user_id !== req.user.uid) {
+        return res.status(403).json({ error: "Ruxsat berilmagan." });
+      }
+
+      const { answersGiven, timeSpentSeconds } = req.body;
+      if (!Array.isArray(answersGiven)) {
+        return res.status(400).json({ error: "answersGiven massiv bo'lishi kerak." });
+      }
+
+      updateAttemptAnswers(attempt.id, answersGiven, timeSpentSeconds);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 6.4. O'rganish rejimida har bir savolga darhol javob olish (Study mode answer)
+  app.post('/api/attempts/:id/answer', optionalAuth, (req, res) => {
+    try {
+      const attempt = getAttempt(req.params.id);
+      if (!attempt) {
+        return res.status(404).json({ error: "Urinish topilmadi." });
+      }
+
+      const { questionIndex, chosenOption } = req.body;
+      if (typeof questionIndex !== 'number' || typeof chosenOption !== 'number') {
+        return res.status(400).json({ error: "questionIndex va chosenOption talab qilinadi." });
+      }
+
+      const fullQuiz = getQuizWithAnswers(attempt.quiz_id);
+      if (!fullQuiz || !fullQuiz.questions || !fullQuiz.questions[questionIndex]) {
+        return res.status(404).json({ error: "Savol topilmadi." });
+      }
+
+      const targetQuestion = fullQuiz.questions[questionIndex];
+      const isCorrect = targetQuestion.correctAnswer === chosenOption;
+
+      // Urinish javobini yangilash
+      const updatedAnswers = [...attempt.answers_given];
+      updatedAnswers[questionIndex] = chosenOption;
+      updateAttemptAnswers(attempt.id, updatedAnswers);
+
+      res.json({
+        success: true,
+        isCorrect,
+        correctAnswer: targetQuestion.correctAnswer,
+        explanation: targetQuestion.explanation || (isCorrect ? "To'g'ri javob!" : "Noto'g'ri javob.")
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 6.5. Urinishni yakunlash va baholash (POST /api/attempts/:id/finish)
+  app.post('/api/attempts/:id/finish', optionalAuth, (req, res) => {
+    try {
+      const attempt = getAttempt(req.params.id);
+      if (!attempt) {
+        return res.status(404).json({ error: "Urinish topilmadi." });
+      }
+
+      const { answersGiven, timeSpentSeconds } = req.body;
+      const finalAnswers = Array.isArray(answersGiven) ? answersGiven : attempt.answers_given;
+      const finalTime = typeof timeSpentSeconds === 'number' ? timeSpentSeconds : attempt.time_spent_seconds;
+
+      const fullQuiz = getQuizWithAnswers(attempt.quiz_id);
+      if (!fullQuiz || !fullQuiz.questions) {
+        return res.status(404).json({ error: "Test savollari topilmadi." });
+      }
+
+      let score = 0;
+      const total = fullQuiz.questions.length;
+      const wrongQuestionsList: any[] = [];
+
+      fullQuiz.questions.forEach((q, idx) => {
+        const userChoice = finalAnswers[idx];
+        if (userChoice === q.correctAnswer) {
+          score++;
+        } else {
+          wrongQuestionsList.push({
+            index: idx,
+            question: q.question,
+            options: q.options,
+            userAnswer: typeof userChoice === 'number' ? userChoice : -1,
+            correctAnswer: q.correctAnswer,
+            explanation: q.explanation
+          });
+        }
+      });
+
+      const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
+      const completed = finishAttempt(attempt.id, {
+        score,
+        total,
+        percentage,
+        time_spent_seconds: finalTime,
+        answers_given: finalAnswers,
+        wrong_questions: wrongQuestionsList,
+        status: 'completed'
+      });
+
+      // Gamifikatsiya (XP va streak)
+      let gamification = null;
+      const userId = attempt.user_id;
+      if (userId && userId !== 'anonymous' && !userId.startsWith('demo_') && !userId.startsWith('guest_')) {
+        const xpEarned = 15 + (score * 5) + (percentage >= 80 ? 15 : 0) + (percentage === 100 ? 30 : 0);
+        gamification = updateUserGamification(userId, xpEarned);
+      }
+
+      // Telegram xabar (S12: HTML escape)
+      if (telegramBotToken && userId && !userId.startsWith('demo_') && !userId.startsWith('guest_')) {
+        const quizTitle = escapeHtml(fullQuiz.title || 'Test');
+        const mins = Math.floor(finalTime / 60);
+        const secs = finalTime % 60;
+        const msg = `📊 <b>Test Yakunlandi!</b>\n\n` +
+          `📖 <b>Test:</b> ${quizTitle}\n` +
+          `🎯 <b>Natija:</b> ${score} / ${total} (${percentage}%)\n` +
+          `⏱ <b>Vaqt:</b> ${mins}m ${secs}s\n` +
+          `⭐ <b>XP:</b> +${15 + (score * 5)} ball\n\n` +
+          `${percentage >= 60 ? "🎉 Ajoyib natija!" : "📚 Xatolar ustida ishlab, qayta urinib ko'ring."}`;
+        sendTelegramMessage(telegramBotToken, userId, msg);
+      }
+
+      res.json({
+        success: true,
+        attempt: completed,
+        wrong_questions: wrongQuestionsList,
+        gamification
+      });
+    } catch (err: any) {
+      console.error("Finish attempt error:", err);
+      res.status(500).json({ error: err.message || "Urinishni yakunlashda xatolik" });
+    }
+  });
+
+  // 6.6. Natijani olish (S11: faqat egasi yoki admin ko'ra oladi)
   app.get('/api/attempts/:id', optionalAuth, (req, res) => {
     try {
       const attempt = getAttempt(req.params.id);
       if (!attempt) {
         return res.status(404).json({ error: "Natija topilmadi." });
       }
+
       // S11 — Egalik tekshiruvi
       if (attempt.user_id && attempt.user_id !== 'anonymous' && req.user) {
         if (attempt.user_id !== req.user.uid && req.user.role !== 'admin' && req.user.role !== 'superadmin') {
           return res.status(403).json({ error: "Bu natijani ko'rish huquqingiz yo'q." });
         }
       }
-      const quiz = getQuiz(attempt.quiz_id);
-      res.json({ success: true, attempt, quiz });
+
+      const fullQuiz = getQuizWithAnswers(attempt.quiz_id);
+
+      // Agar urinish hali yakunlanmagan bo'lsa (in_progress), to'g'ri javoblarsiz qaytaramiz (S10)
+      if (attempt.status === 'in_progress') {
+        const sanitizedQuiz = fullQuiz ? {
+          ...fullQuiz,
+          questions: fullQuiz.questions?.map(q => ({
+            id: q.id,
+            quiz_id: q.quiz_id,
+            question: q.question,
+            options: q.options,
+            order_num: q.order_num
+          }))
+        } : null;
+        return res.json({ success: true, attempt, quiz: sanitizedQuiz });
+      }
+
+      // Tugallangan urinishda to'liq quiz qaytariladi
+      res.json({ success: true, attempt, quiz: fullQuiz });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Foydalanuvchi natijalari (S2: sessiyadan)
+  // 6.7. Foydalanuvchi barcha urinishlari (Tarix)
   app.get('/api/attempts', requireAuth, (req, res) => {
     try {
       const attempts = getUserAttempts(req.user!.uid);
       res.json({ success: true, attempts });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 6.8. Shaxsiy statistika va gamifikatsiya (GET /api/users/me/stats)
+  app.get('/api/users/me/stats', requireAuth, (req, res) => {
+    try {
+      const stats = getUserStats(req.user!.uid);
+      res.json({ success: true, stats });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 6.9. Test bo'yicha reyting (Leaderboard)
+  app.get('/api/quizzes/:id/leaderboard', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 10;
+      const leaderboard = getQuizLeaderboard(req.params.id, limit);
+      res.json({ success: true, leaderboard });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
