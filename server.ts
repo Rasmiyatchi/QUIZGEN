@@ -71,7 +71,20 @@ import {
   getAllOrders,
   addAuditLog,
   getAuditLogs,
-  cancelUserSubscription
+  cancelUserSubscription,
+  saveQuizToLibrary,
+  removeQuizFromLibrary,
+  isQuizSavedByUser,
+  getUserSavedQuizzes,
+  searchPublicQuizzes,
+  getFeaturedQuizzes,
+  getQuizBySlug,
+  forkQuiz,
+  reportQuiz,
+  createLibraryFolder,
+  getUserLibraryFolders,
+  deleteLibraryFolder,
+  generateSlug
 } from './src/lib/db.ts';
 import { startTelegramBot, sendTelegramMessage } from './src/services/telegram-bot.ts';
 import { 
@@ -1183,6 +1196,213 @@ correctAnswer - bu to'g'ri javobning options massividagi 0 dan boshlanuvchi inde
         return res.status(400).json({ error: "Test o'chirilmadi." });
       }
       res.json({ success: true, message: "Test muvaffaqiyatli o'chirildi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ===================================================
+  // 5.1. KUTUBXONA ENDPOINTLARI (M6 — Library Moduli)
+  // ===================================================
+
+  // 1. Mening testlarim
+  app.get('/api/library/mine', requireAuth, (req, res) => {
+    try {
+      const quizzes = getUserQuizzes(req.user!.uid);
+      res.json({ success: true, quizzes });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 2. Saqlangan testlar
+  app.get('/api/library/saved', requireAuth, (req, res) => {
+    try {
+      const saved = getUserSavedQuizzes(req.user!.uid);
+      const folders = getUserLibraryFolders(req.user!.uid);
+      res.json({ success: true, saved, folders });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 3. Ommaviy kutubxona (Qidiruv, saralash, kategoriyalar)
+  app.get('/api/library/public', (req, res) => {
+    try {
+      const q = req.query.q as string;
+      const category = req.query.category as string;
+      const sort = req.query.sort as string;
+      const limit = parseInt(req.query.limit as string) || 20;
+      const offset = parseInt(req.query.offset as string) || 0;
+
+      const quizzes = searchPublicQuizzes({ q, category, sort, limit, offset });
+      res.json({ success: true, quizzes });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4. Tanlangan (Featured) testlar
+  app.get('/api/library/featured', (req, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 6;
+      const featured = getFeaturedQuizzes(limit);
+      res.json({ success: true, featured });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 5. Oxirgi yechilgan / tugallanmagan urinishlar
+  app.get('/api/library/recent', requireAuth, (req, res) => {
+    try {
+      const attempts = getUserAttempts(req.user!.uid);
+      const inProgress = attempts.filter(a => a.status === 'in_progress');
+      const completed = attempts.filter(a => a.status === 'completed' || !a.status).slice(0, 5);
+      res.json({ success: true, inProgress, recentCompleted: completed });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 6. Testni kutubxonaga saqlash
+  app.post('/api/library/saved/:quizId', requireAuth, (req, res) => {
+    try {
+      const { folderId } = req.body;
+      const result = saveQuizToLibrary(req.user!.uid, req.params.quizId, folderId);
+      if (!result.success) {
+        return res.status(402).json({ error: result.message, code: 'LIBRARY_LIMIT_EXCEEDED' });
+      }
+      res.json({ success: true, message: result.message });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7. Testni kutubxonadan olib tashlash
+  app.delete('/api/library/saved/:quizId', requireAuth, (req, res) => {
+    try {
+      removeQuizFromLibrary(req.user!.uid, req.params.quizId);
+      res.json({ success: true, message: "Kutubxonadan olib tashlandi." });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 8. Test saqlanganmi tekshirish
+  app.get('/api/library/saved/:quizId/status', requireAuth, (req, res) => {
+    try {
+      const isSaved = isQuizSavedByUser(req.user!.uid, req.params.quizId);
+      res.json({ success: true, isSaved });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 9. Papkalar boshqaruvi
+  app.get('/api/library/folders', requireAuth, (req, res) => {
+    try {
+      const folders = getUserLibraryFolders(req.user!.uid);
+      res.json({ success: true, folders });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/library/folders', requireAuth, (req, res) => {
+    try {
+      const { name } = req.body;
+      if (!name || typeof name !== 'string') {
+        return res.status(400).json({ error: "Papka nomi talab qilinadi." });
+      }
+      const folder = createLibraryFolder(req.user!.uid, sanitizeString(name, 50));
+      res.json({ success: true, folder });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/library/folders/:id', requireAuth, (req, res) => {
+    try {
+      deleteLibraryFolder(req.user!.uid, req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 10. Slug bo'yicha testni olish (/q/:slug sahifasi uchun)
+  app.get('/api/quizzes/slug/:slug', optionalAuth, (req, res) => {
+    try {
+      const quiz = getQuizBySlug(req.params.slug);
+      if (!quiz) {
+        return res.status(404).json({ error: "Test topilmadi." });
+      }
+
+      // Yopiq test faqat egasiga ko'rinadi
+      if (quiz.visibility === 'private' && quiz.user_id !== req.user?.uid && req.user?.role !== 'admin' && req.user?.role !== 'superadmin') {
+        return res.status(403).json({ error: "Bu test yopiq." });
+      }
+
+      // To'g'ri javoblarsiz tozalash (agar egasi bo'lmasa)
+      const isOwner = Boolean(req.user && quiz.user_id === req.user.uid);
+      const sanitized = {
+        ...quiz,
+        questions: quiz.questions?.map(q => ({
+          id: q.id,
+          quiz_id: q.quiz_id,
+          question: q.question,
+          options: q.options,
+          explanation: q.explanation,
+          order_num: q.order_num,
+          ...(isOwner ? { correctAnswer: q.correctAnswer } : {})
+        }))
+      };
+
+      res.json({ success: true, quiz: sanitized });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 11. Testdan nusxa olish (Fork)
+  app.post('/api/quizzes/:id/fork', requireAuth, (req, res) => {
+    try {
+      const original = getQuiz(req.params.id);
+      if (!original) {
+        return res.status(404).json({ error: "Asl test topilmadi." });
+      }
+      if (original.visibility === 'private' && original.user_id !== req.user!.uid && req.user!.role !== 'admin') {
+        return res.status(403).json({ error: "Yopiq testdan nusxa olib bo'lmaydi." });
+      }
+
+      const forked = forkQuiz(req.user!.uid, original.id);
+      if (!forked) {
+        return res.status(400).json({ error: "Nusxa yaratib bo'lmadi." });
+      }
+
+      res.json({ success: true, quiz: forked, message: "Testdan muvaffaqiyatli nusxa olindi!" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 12. Shikoyat qilish (Report)
+  app.post('/api/quizzes/:id/report', optionalAuth, (req, res) => {
+    try {
+      const { reason } = req.body;
+      if (!reason || typeof reason !== 'string') {
+        return res.status(400).json({ error: "Shikoyat sababi ko'rsatilishi shart." });
+      }
+
+      const reporterId = req.user ? req.user.uid : 'anonymous_' + (req.ip || 'ip');
+      const result = reportQuiz(reporterId, req.params.id, sanitizeString(reason, 500));
+      res.json({
+        success: true,
+        message: result.hidden 
+          ? "Shikoyatingiz qabul qilindi. Test ko'rib chiqish uchun vaqtincha yashirildi."
+          : "Shikoyatingiz qabul qilindi va moderatorlarga yuborildi."
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

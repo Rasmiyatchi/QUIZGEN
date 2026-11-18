@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { LogOut, Flame, Sparkles, Send, ShieldCheck, Zap, Crown } from 'lucide-react';
+import { LogOut, Flame, Sparkles, Send, ShieldCheck, Zap, Crown, BookOpen } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 
@@ -63,6 +63,15 @@ export default function Navbar() {
             <span className="sm:hidden">Admin</span>
           </Link>
         )}
+
+        {/* Kutubxona tugmasi */}
+        <Link
+          to="/library"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black bg-white/[0.04] border border-white/10 text-slate-300 hover:text-white hover:bg-white/[0.08] transition-all"
+        >
+          <BookOpen className="w-3.5 h-3.5 text-blue-400" />
+          <span className="hidden sm:inline">Kutubxona</span>
+        </Link>
 
         {/* Premium / Tariflar tugmasi */}
         <Link 

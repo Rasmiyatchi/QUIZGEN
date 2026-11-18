@@ -15,7 +15,10 @@ import {
   getAdminStats,
   addAuditLog,
   getDatabase,
-  cancelUserSubscription
+  cancelUserSubscription,
+  searchPublicQuizzes,
+  getQuizBySlug,
+  getQuiz
 } from '../lib/db.ts';
 import { escapeHtml, generateId } from '../lib/security.ts';
 import { getEffectiveEntitlements, activateSubscription, clearEntitlementsCache } from '../lib/entitlements.ts';
@@ -72,6 +75,24 @@ export async function answerCallbackQuery(botToken: string, callbackQueryId: str
     });
   } catch (err: any) {
     console.warn("Telegram answerCallbackQuery error:", err.message);
+  }
+}
+
+export async function answerInlineQuery(botToken: string, inlineQueryId: string, results: any[]) {
+  if (!botToken) return;
+  try {
+    const url = `https://api.telegram.org/bot${botToken}/answerInlineQuery`;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        inline_query_id: inlineQueryId,
+        results,
+        cache_time: 10
+      })
+    });
+  } catch (err: any) {
+    console.warn("Telegram answerInlineQuery error:", err.message);
   }
 }
 
@@ -136,6 +157,9 @@ export async function startTelegramBot(botToken: string, appUrl: string) {
           if (update.callback_query) {
             console.log(`[Telegram Update] Callback: ${update.callback_query.data} from ${update.callback_query.from?.first_name}`);
             await handleCallbackQuery(botToken, appUrl, update.callback_query);
+          } else if (update.inline_query) {
+            console.log(`[Telegram Update] Inline query: "${update.inline_query.query}" from ${update.inline_query.from?.first_name}`);
+            await handleInlineQuery(botToken, appUrl, update.inline_query);
           } else if (update.message) {
             console.log(`[Telegram Update] Message: "${update.message.text || 'fayl'}" from ${update.message.from?.first_name}`);
             await handleBotMessage(botToken, appUrl, update.message);
@@ -412,6 +436,34 @@ function sendStatusMenu(botToken: string, chatId: number | string, user: any, ap
   });
 }
 
+async function handleInlineQuery(botToken: string, appUrl: string, inlineQuery: any) {
+  const query = (inlineQuery.query || '').trim();
+  const results = searchPublicQuizzes({ q: query, limit: 10 });
+  const articles = results.map((quiz: any) => ({
+    type: 'article',
+    id: quiz.id,
+    title: quiz.title,
+    description: `${quiz.questions_count || 0} ta savol • ${quiz.category || 'Umumiy'} • ${quiz.views_count || 0} ko'rish`,
+    input_message_content: {
+      message_text: `📚 <b>${escapeHtml(quiz.title)}</b>\n\n` +
+        `📂 Kategoriya: <b>${escapeHtml(quiz.category || 'Umumiy')}</b>\n` +
+        `❓ Savollar soni: <b>${quiz.questions_count || 0} ta</b>\n` +
+        `👁 Ko'rishlar: <b>${quiz.views_count || 0}</b>\n\n` +
+        `Testni yechish uchun quyidagi tugmani bosing:`,
+      parse_mode: 'HTML'
+    },
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "▶️ Testni boshlash", url: `${appUrl}/quiz/${quiz.id}` }
+        ]
+      ]
+    }
+  }));
+
+  await answerInlineQuery(botToken, inlineQuery.id, articles);
+}
+
 async function handleBotMessage(botToken: string, appUrl: string, msg: any) {
   const chatId = msg.chat?.id;
   if (!chatId) return;
@@ -466,7 +518,37 @@ async function handleBotMessage(botToken: string, appUrl: string, msg: any) {
     }
   }
 
-  // 2. /start buyrug'i (oddiy)
+  // 2. Quiz Deep-link: /start quiz_<slugOrId> yoki /start q_<slugOrId>
+  if (rawText.startsWith('/start quiz_') || rawText.startsWith('/start q_')) {
+    const param = rawText.replace(/^\/start\s+(quiz_|q_)/, '').trim();
+    const quiz = getQuizBySlug(param) || getQuiz(param);
+    if (quiz) {
+      const safeTitle = escapeHtml(quiz.title);
+      const cat = escapeHtml(quiz.category || 'Umumiy');
+      const qCount = quiz.questions_count || 0;
+      const isHttps = appUrl.startsWith('https://');
+      const keyboard: any[] = [];
+      if (isHttps) {
+        keyboard.push([{ text: "▶️ Testni boshlash (TMA)", web_app: { url: `${appUrl}/quiz/${quiz.id}` } }]);
+      } else {
+        keyboard.push([{ text: "▶️ Testni boshlash", url: `${appUrl}/quiz/${quiz.id}` }]);
+      }
+      keyboard.push([{ text: "🎴 Flashcardlar", url: `${appUrl}/flashcards/${quiz.id}` }]);
+
+      return sendTelegramMessage(botToken, chatId,
+        `📚 <b>${safeTitle}</b>\n\n` +
+        `📂 Kategoriya: <b>${cat}</b>\n` +
+        `❓ Savollar soni: <b>${qCount} ta</b>\n` +
+        `👁 Ko'rishlar: <b>${quiz.views_count || 0}</b>\n\n` +
+        `Testni yechish uchun pastdagi tugmani bosing:`,
+        { inline_keyboard: keyboard }
+      );
+    } else {
+      return sendTelegramMessage(botToken, chatId, "⚠️ Kechirasiz, bunday test topilmadi yoki u o'chirilgan.");
+    }
+  }
+
+  // 3. /start buyrug'i (oddiy)
   if (rawText === '/start' || rawText.startsWith('/start')) {
     // S12 — HTML escape
     const safeName = escapeHtml(user?.first_name || 'Hurmatli foydalanuvchi');

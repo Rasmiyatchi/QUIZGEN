@@ -91,7 +91,15 @@ export interface QuizRecord {
   total_questions: number;
   time_limit_minutes: number; // 0 = cheklovsiz
   is_public: number; // 1 = public, 0 = private
+  slug?: string;
+  visibility?: 'public' | 'unlisted' | 'private';
+  status?: 'draft' | 'published' | 'hidden_by_admin';
+  category?: string;
+  views_count?: number;
+  forked_from?: string;
+  is_featured?: number;
   questions?: QuestionRecord[];
+  author_name?: string;
   created_at?: string;
 }
 
@@ -275,6 +283,36 @@ export function initDatabase() {
         sort INTEGER DEFAULT 0
       );
 
+      CREATE TABLE IF NOT EXISTS saved_quizzes (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        quiz_id TEXT NOT NULL,
+        folder_id TEXT DEFAULT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(user_id, quiz_id),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS library_folders (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        color TEXT DEFAULT '#3b82f6',
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS quiz_reports (
+        id TEXT PRIMARY KEY,
+        reporter_id TEXT NOT NULL,
+        quiz_id TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        status TEXT DEFAULT 'pending',
+        created_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (quiz_id) REFERENCES quizzes(id) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS subscriptions (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
@@ -391,6 +429,26 @@ export function initDatabase() {
       } catch (e) {}
     }
 
+    // Testlar jadvaliga slug, visibility, category, views ustunlarini qo'shish (M6)
+    const quizCols = [
+      'slug TEXT DEFAULT NULL',
+      'visibility TEXT DEFAULT "public"',
+      'status TEXT DEFAULT "published"',
+      'category TEXT DEFAULT "Umumiy"',
+      'views_count INTEGER DEFAULT 0',
+      'forked_from TEXT DEFAULT NULL',
+      'is_featured INTEGER DEFAULT 0'
+    ];
+    for (const col of quizCols) {
+      try {
+        dbInstance.exec(`ALTER TABLE quizzes ADD COLUMN ${col}`);
+      } catch (e) {}
+    }
+
+    try {
+      dbInstance.exec(`ALTER TABLE library_folders ADD COLUMN color TEXT DEFAULT '#3b82f6'`);
+    } catch (e) {}
+
     console.log("SQLite ma'lumotlar bazasi muvaffaqiyatli ulandi: " + SQLITE_DB_FILE);
   } catch (err) {
     console.warn("node:sqlite xatosi, JSON fallback faollashtirildi:", err);
@@ -442,15 +500,32 @@ export function getUser(id: string): UserRecord | null {
   return (row as UserRecord) || null;
 }
 
+export function generateSlug(title: string, id: string): string {
+  const cleanTitle = (title || 'test')
+    .toLowerCase()
+    .replace(/['`ʻʼ]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .substring(0, 50);
+  const shortId = (id || generateId()).substring(0, 6);
+  return `${cleanTitle || 'test'}-${shortId}`;
+}
+
 // 2. TESTLAR (Quizzes)
 export function createQuiz(quiz: QuizRecord, questions: QuestionRecord[]): QuizRecord {
-  const quizId = quiz.id || Math.random().toString(36).substring(7);
+  const quizId = quiz.id || generateId();
   const now = new Date().toISOString();
+  const slug = quiz.slug || generateSlug(quiz.title, quizId);
+  const category = quiz.category || quiz.subject || 'Umumiy';
+  const visibility = quiz.visibility || (quiz.is_public === 0 ? 'private' : 'public');
 
   if (useJsonFallback || !dbInstance) {
     const record: QuizRecord = {
       ...quiz,
       id: quizId,
+      slug,
+      category,
+      visibility,
       total_questions: questions.length,
       created_at: now
     };
@@ -465,8 +540,11 @@ export function createQuiz(quiz: QuizRecord, questions: QuestionRecord[]): QuizR
   }
 
   const insertQuiz = dbInstance.prepare(`
-    INSERT INTO quizzes (id, user_id, title, subject, source_type, total_questions, time_limit_minutes, is_public, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO quizzes (
+      id, user_id, title, subject, source_type, total_questions, time_limit_minutes,
+      is_public, slug, visibility, status, category, views_count, is_featured, forked_from, created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `);
   insertQuiz.run(
     quizId,
@@ -476,7 +554,14 @@ export function createQuiz(quiz: QuizRecord, questions: QuestionRecord[]): QuizR
     quiz.source_type || 'hemis',
     questions.length,
     quiz.time_limit_minutes || 0,
-    quiz.is_public !== undefined ? quiz.is_public : 1
+    quiz.is_public !== undefined ? quiz.is_public : 1,
+    slug,
+    visibility,
+    quiz.status || 'published',
+    category,
+    quiz.views_count || 0,
+    quiz.is_featured || 0,
+    quiz.forked_from || null
   );
 
   const insertQuestion = dbInstance.prepare(`
@@ -643,6 +728,318 @@ export function deleteQuiz(id: string, userId: string): boolean {
   const result = dbInstance.prepare('DELETE FROM quizzes WHERE id = ? AND user_id = ?').run(id, userId);
   dbInstance.prepare('DELETE FROM questions WHERE quiz_id = ?').run(id);
   return result.changes > 0;
+}
+
+// ===================================================
+// KUTUBXONA MODULI (M6 — Library Moduli)
+// ===================================================
+
+// 1. Kutubxonaga saqlash
+export function saveQuizToLibrary(userId: string, quizId: string, folderId?: string): { success: boolean; message?: string } {
+  if (useJsonFallback || !dbInstance) {
+    return { success: true };
+  }
+
+  // Allaqachon saqlanganmi?
+  const existing = dbInstance.prepare('SELECT id FROM saved_quizzes WHERE user_id = ? AND quiz_id = ?').get(userId, quizId);
+  if (existing) {
+    return { success: true, message: "Test allaqachon kutubxonangizda mavjud." };
+  }
+
+  // Saqlash limiti (Tarif bo'yicha)
+  const countRow = dbInstance.prepare('SELECT COUNT(*) as count FROM saved_quizzes WHERE user_id = ?').get(userId) as any;
+  const currentCount = countRow ? countRow.count : 0;
+  
+  const user = getUser(userId);
+  const plan = user?.subscription_plan || 'free';
+  let maxSaves = 20;
+  if (plan === 'start') maxSaves = 50;
+  if (plan === 'pro') maxSaves = 200;
+  if (plan === 'master') maxSaves = 99999;
+
+  if (currentCount >= maxSaves) {
+    return { 
+      success: false, 
+      message: `Tarifingiz (${plan.toUpperCase()}) bo'yicha kutubxonada saqlash limitingiz (${maxSaves} ta) to'lgan. Limitni oshirish uchun tarifingizni yangilang.` 
+    };
+  }
+
+  const id = generateId();
+  dbInstance.prepare(`
+    INSERT INTO saved_quizzes (id, user_id, quiz_id, folder_id, created_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+  `).run(id, userId, quizId, folderId || null);
+
+  return { success: true, message: "Test kutubxonangizga muvaffaqiyatli saqlandi." };
+}
+
+// 2. Kutubxonadan olib tashlash
+export function removeQuizFromLibrary(userId: string, quizId: string): boolean {
+  if (useJsonFallback || !dbInstance) return true;
+  const res = dbInstance.prepare('DELETE FROM saved_quizzes WHERE user_id = ? AND quiz_id = ?').run(userId, quizId);
+  return res.changes > 0;
+}
+
+// 3. Test foydalanuvchi tomonidan saqlanganmi tekshirish
+export function isQuizSavedByUser(userId: string, quizId: string): boolean {
+  if (useJsonFallback || !dbInstance) return false;
+  const row = dbInstance.prepare('SELECT id FROM saved_quizzes WHERE user_id = ? AND quiz_id = ?').get(userId, quizId);
+  return Boolean(row);
+}
+
+// 4. Foydalanuvchi saqlagan barcha testlar
+export function getUserSavedQuizzes(userId: string): any[] {
+  if (useJsonFallback || !dbInstance) return [];
+  const rows = dbInstance.prepare(`
+    SELECT s.id as save_id, s.folder_id, s.created_at as saved_at,
+           q.id, q.title, q.subject, q.category, q.total_questions, q.time_limit_minutes,
+           q.slug, q.visibility, q.status, q.source_type, q.created_at,
+           u.first_name as author_name, u.username as author_username,
+           f.name as folder_name,
+           (SELECT COUNT(*) FROM attempts a WHERE a.quiz_id = q.id) as attempts_count
+    FROM saved_quizzes s
+    JOIN quizzes q ON s.quiz_id = q.id
+    LEFT JOIN users u ON q.user_id = u.id
+    LEFT JOIN library_folders f ON s.folder_id = f.id
+    WHERE s.user_id = ?
+    ORDER BY s.created_at DESC
+  `).all(userId) as any[];
+
+  return rows;
+}
+
+// 5. Ommaviy testlarni qidirish va filtrlash
+export function searchPublicQuizzes(params: {
+  q?: string;
+  category?: string;
+  sort?: string;
+  limit?: number;
+  offset?: number;
+}): any[] {
+  if (useJsonFallback || !dbInstance) {
+    return Object.values(memoryStore.quizzes).filter(q => q.is_public === 1);
+  }
+
+  const limit = params.limit || 20;
+  const offset = params.offset || 0;
+  const conditions: string[] = [
+    "(q.is_public = 1 OR q.visibility = 'public')",
+    "(q.status != 'hidden_by_admin' AND (q.status = 'published' OR q.status = 'active' OR q.status IS NULL))"
+  ];
+  const queryParams: any[] = [];
+
+  if (params.q) {
+    conditions.push("(q.title LIKE ? OR q.subject LIKE ? OR q.category LIKE ?)");
+    const searchTerm = `%${params.q}%`;
+    queryParams.push(searchTerm, searchTerm, searchTerm);
+  }
+
+  if (params.category && params.category !== 'all' && params.category !== 'Barchasi') {
+    conditions.push("(q.category = ? OR q.subject = ?)");
+    queryParams.push(params.category, params.category);
+  }
+
+  let orderBy = "q.created_at DESC";
+  if (params.sort === 'popular') {
+    orderBy = "q.views_count DESC, q.created_at DESC";
+  } else if (params.sort === 'most_played') {
+    orderBy = "attempts_count DESC, q.created_at DESC";
+  } else if (params.sort === 'questions') {
+    orderBy = "q.total_questions DESC";
+  }
+
+  const sql = `
+    SELECT q.*, 
+           u.first_name as author_name, u.username as author_username,
+           (SELECT COUNT(*) FROM attempts a WHERE a.quiz_id = q.id) as attempts_count,
+           (SELECT ROUND(AVG(percentage)) FROM attempts a WHERE a.quiz_id = q.id AND (a.status = 'completed' OR a.status IS NULL)) as avg_score
+    FROM quizzes q
+    LEFT JOIN users u ON q.user_id = u.id
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY ${orderBy}
+    LIMIT ? OFFSET ?
+  `;
+  queryParams.push(limit, offset);
+
+  return dbInstance.prepare(sql).all(...queryParams) as any[];
+}
+
+// 6. Tanlangan (Featured) testlar
+export function getFeaturedQuizzes(limit = 6): any[] {
+  if (useJsonFallback || !dbInstance) return [];
+  const rows = dbInstance.prepare(`
+    SELECT q.*, u.first_name as author_name,
+           (SELECT COUNT(*) FROM attempts a WHERE a.quiz_id = q.id) as attempts_count
+    FROM quizzes q
+    LEFT JOIN users u ON q.user_id = u.id
+    WHERE (q.is_featured = 1 OR q.total_questions >= 20) 
+      AND (q.is_public = 1 OR q.visibility = 'public')
+      AND (q.status != 'hidden_by_admin' AND (q.status = 'published' OR q.status = 'active' OR q.status IS NULL))
+    ORDER BY q.views_count DESC, q.created_at DESC
+    LIMIT ?
+  `).all(limit) as any[];
+  return rows;
+}
+
+// 7. Slug yoki ID bo'yicha testni olish
+export function getQuizBySlug(slugOrId: string): QuizRecord | null {
+  if (useJsonFallback || !dbInstance) {
+    return memoryStore.quizzes[slugOrId] || null;
+  }
+
+  let quiz = dbInstance.prepare(`
+    SELECT q.*, u.first_name as author_name, u.username as author_username
+    FROM quizzes q
+    LEFT JOIN users u ON q.user_id = u.id
+    WHERE q.slug = ? OR q.id = ?
+  `).get(slugOrId, slugOrId) as QuizRecord;
+
+  if (!quiz) return null;
+
+  // Ko'rishlar sonini oshirish
+  try {
+    dbInstance.prepare('UPDATE quizzes SET views_count = COALESCE(views_count, 0) + 1 WHERE id = ?').run(quiz.id);
+  } catch (e) {}
+
+  const rows = dbInstance.prepare('SELECT * FROM questions WHERE quiz_id = ? ORDER BY order_num ASC').all(quiz.id) as any[];
+  const questions: QuestionRecord[] = rows.map(r => ({
+    id: r.id,
+    quiz_id: r.quiz_id,
+    question: r.question_text,
+    options: typeof r.options === 'string' ? JSON.parse(r.options) : r.options,
+    correctAnswer: r.correct_answer,
+    explanation: r.explanation,
+    order_num: r.order_num
+  }));
+
+  return {
+    ...quiz,
+    questions
+  };
+}
+
+// 8. Testdan nusxa olish (Fork)
+export function forkQuiz(arg1: string, arg2: string): QuizRecord | null {
+  const q1 = getQuiz(arg1);
+  const q2 = getQuiz(arg2);
+  let original: QuizRecord | null = null;
+  let userId = '';
+
+  if (q1 && !q2) {
+    original = q1;
+    userId = arg2;
+  } else {
+    original = q2 || q1;
+    userId = arg1;
+  }
+
+  if (!original || !original.questions || original.questions.length === 0) {
+    return null;
+  }
+
+  const newQuizId = generateId();
+  const newTitle = `${original.title} (Nusxa)`;
+  const newSlug = generateSlug(newTitle, newQuizId);
+
+  const newQuizRecord: QuizRecord = {
+    id: newQuizId,
+    user_id: userId,
+    title: newTitle,
+    subject: original.subject || 'Umumiy',
+    category: original.category || original.subject || 'Umumiy',
+    source_type: original.source_type || 'hemis',
+    total_questions: original.questions.length,
+    time_limit_minutes: original.time_limit_minutes || 0,
+    is_public: 0,
+    visibility: 'private',
+    status: 'published',
+    slug: newSlug,
+    forked_from: original.id
+  };
+
+  const newQuestions: QuestionRecord[] = original.questions.map((q, idx) => ({
+    id: generateId(),
+    quiz_id: newQuizId,
+    question: q.question,
+    options: q.options,
+    correctAnswer: q.correctAnswer,
+    explanation: q.explanation,
+    order_num: idx
+  }));
+
+  return createQuiz(newQuizRecord, newQuestions);
+}
+
+// 9. Shikoyat qilish (Report) — 5 ta shikoyatdan so'ng test avtomatik yashiriladi
+export function reportQuiz(arg1: string, arg2: string, reason: string, details?: string): { success: boolean; hidden: boolean } {
+  if (useJsonFallback || !dbInstance) return { success: true, hidden: false };
+
+  const q1 = getQuiz(arg1);
+  const q2 = getQuiz(arg2);
+  let quizId = '';
+  let reporterId = '';
+
+  if (q1 && !q2) {
+    quizId = arg1;
+    reporterId = arg2;
+  } else {
+    reporterId = arg1;
+    quizId = arg2;
+  }
+
+  const reportId = generateId();
+  dbInstance.prepare(`
+    INSERT INTO quiz_reports (id, reporter_id, quiz_id, reason, status, created_at)
+    VALUES (?, ?, ?, ?, 'pending', datetime('now'))
+  `).run(reportId, reporterId, quizId, reason);
+
+  const countRow = dbInstance.prepare('SELECT COUNT(*) as count FROM quiz_reports WHERE quiz_id = ?').get(quizId) as any;
+  const count = countRow ? countRow.count : 0;
+
+  let hidden = false;
+  if (count >= 5) {
+    dbInstance.prepare(`UPDATE quizzes SET status = 'hidden_by_admin' WHERE id = ?`).run(quizId);
+    hidden = true;
+  }
+
+  return { success: true, hidden };
+}
+
+// 10. Papkalar boshqaruvi
+export function createLibraryFolder(userId: string, name: string, color = '#3b82f6'): any {
+  if (useJsonFallback || !dbInstance) return { id: generateId(), user_id: userId, name, color };
+  const id = generateId();
+  try {
+    dbInstance.prepare(`
+      INSERT INTO library_folders (id, user_id, name, color, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `).run(id, userId, name, color);
+  } catch (err: any) {
+    dbInstance.prepare(`
+      INSERT INTO library_folders (id, user_id, name, created_at)
+      VALUES (?, ?, ?, datetime('now'))
+    `).run(id, userId, name);
+  }
+  return { id, user_id: userId, name, color };
+}
+
+export function getUserLibraryFolders(userId: string): any[] {
+  if (useJsonFallback || !dbInstance) return [];
+  return dbInstance.prepare('SELECT * FROM library_folders WHERE user_id = ? ORDER BY created_at ASC').all(userId) as any[];
+}
+
+export function deleteLibraryFolder(arg1: string, arg2: string): boolean {
+  if (useJsonFallback || !dbInstance) return true;
+  const stmt = dbInstance.prepare(`
+    DELETE FROM library_folders 
+    WHERE (user_id = ? AND id = ?) OR (id = ? AND user_id = ?)
+  `);
+  dbInstance.prepare(`
+    UPDATE saved_quizzes SET folder_id = NULL 
+    WHERE folder_id = ? OR folder_id = ?
+  `).run(arg1, arg2);
+  const res = stmt.run(arg1, arg2, arg1, arg2);
+  return res.changes > 0;
 }
 
 // 3. NATIJALAR / URINISHLAR (Attempts)

@@ -8,10 +8,10 @@
 | **M1** | **Obuna Yadrosi & Entitlements Moduli** | **Yakunlandi** | `v3/m1-billing` |
 | **M2** | **Admin Panel v1** | **Yakunlandi** | `v3/m2-admin` |
 | **M3** | **To'lovlar (Payme, Click, Telegram, Chek)** | **Yakunlandi** | `v3/m3-payments` |
-| **M4** | Test Yaratish Yadrosi va Bot (grammY) | Navbatda | `v3/m4-bot-creation` |
-| **M5** | Server Urinishlari & Natijalar Tahlili | Kutilmoqda | `v3/m5-attempts` |
-| **M6** | Kutubxona Moduli (Library) | Kutilmoqda | `v3/m6-library` |
-| **M7** | Veb va Mini App Sayqali | Kutilmoqda | `v3/m7-web-tma` |
+| **M4** | **Test Yaratish Yadrosi va HEMIS Parser v3** | **Yakunlandi** | `v3/m4-bot-creation` |
+| **M5** | **Server Urinishlari, Yechish Tajribasi va Gamifikatsiya** | **Yakunlandi** | `v3/m5-attempts` |
+| **M6** | **Kutubxona Moduli (Library, Public, Folders, Fork)** | **Yakunlandi** | `v3/m6-library` |
+| **M7** | Veb va Mini App Sayqali | Navbatda | `v3/m7-web-tma` |
 | **M8** | Admin v2 & Xabarnoma | Kutilmoqda | `v3/m8-admin-v2` |
 | **M9** | Sifat, Yuklama & Ishga Tushirish | Kutilmoqda | `v3/m9-release` |
 
@@ -139,3 +139,37 @@
   - `alert()` va `window.confirm()` butunlay yo'q qilindi, Glass tasdiqlash modallari o'rnatildi.
 - [x] **Avtomatlashgan Testlar:**
   - `tests/m5-attempts.test.ts` da 5/5 test 100% muvaffaqiyatli o'tdi.
+
+---
+
+## M6 — Test Kutubxonasi Moduli (Library, Public, Folders, Fork, Reports) Qabul Mezonlari Tekshiruvi
+
+- [x] **Ommaviy Qidiruv va Filtrlash (TZ 7-bo'lim):**
+  - `GET /api/library/public` — qidiruv so'zi (`q`), kategoriya (`category`), va saralash (`sort: popular | newest | questions`).
+  - Kategoriya bo'yicha saralash: Umumiy, Tibbiyot, Iqtisodiyot, Axborot texnologiyalari, Huquq, Tillar, Aniq fanlar, Ijtimoiy fanlar.
+  - `GET /api/library/featured` — tanlangan (tavsiya etilgan) testlar banneri.
+- [x] **Shaxsiy va Saqlangan Testlar Boshqaruvi:**
+  - `GET /api/library/mine` — foydalanuvchining shaxsiy yaratgan testlari.
+  - `GET /api/library/saved` — saqlangan testlar ro'yxati (jild bo'yicha filtrlash imkoni bilan).
+  - `POST /api/library/saved/:quizId` va `DELETE /api/library/saved/:quizId` — testni kutubxonaga saqlash va olib tashlash.
+  - Tarif bo'yicha limitlar (`library_saves`): Free: 20 ta, Start: 50 ta, Pro: 200 ta, Master: cheksiz.
+  - `GET /api/library/recent` — yaqinda ishlangan testlar va oxirgi natijalar.
+- [x] **Jildlar (Folders) Boshqaruvi:**
+  - `library_folders` jadvali va ranglar (`color`).
+  - `POST /api/library/folders`, `GET /api/library/folders`, `DELETE /api/library/folders/:id`.
+  - Jild o'chirilganda undagi saqlangan testlar o'chib ketmaydi (`folder_id = NULL`).
+- [x] **Testdan Mustaqil Nusxa Olish (Fork):**
+  - `POST /api/quizzes/:id/fork` — test savollari bilan birga yangi unikal identifikatorlar bilan klonlanadi, `forked_from` original testga bog'lanadi, ko'rishlar soni 0 ga qaytariladi.
+- [x] **Moderatsiya va Shikoyatlar (Reports):**
+  - `POST /api/quizzes/:id/report` — sabablar (`incorrect_answers`, `offensive_content`, `copyright`, `spam`, `other`) bilan shikoyat qilish.
+  - 5 ta shikoyatdan so'ng test holati avtomatik ravishda `status = 'hidden_by_admin'` qilinadi va ommaviy qidiruvdan yo'qoladi.
+- [x] **Frontend Sahifalar va Navigatsiya:**
+  - `src/pages/Library.tsx` — tablar (Ommaviy, Saqlanganlar, Mening testlarim, Yaqinda), qidiruv debouncing, jild yaratish modali, ulashish modali, shikoyat qilish modali, toast xabarnomalar.
+  - `src/pages/PublicQuiz.tsx` (`/q/:slug`) — ochiq test sahifasi, metadata, eng yaxshi natijalar (top-5 leaderboard), testni boshlash va ulashish tugmalari.
+  - `FloatingBottomNav` va `Navbar.tsx` da "Kutubxona" havolasi qo'shildi.
+- [x] **Telegram Bot Integratsiyasi:**
+  - Bot Inline Query (`@QuizGenBot <qidiruv>`) orqali har qanday chatda testlarni qidirish va ulashish.
+  - Deep-link (`/start quiz_<slugOrId>`) orqali test kartochkasini ochish va TMA orqali ishga tushirish.
+- [x] **Avtomatlashgan Testlar:**
+  - `tests/m6-library.test.ts` da 6/6 test 100% muvaffaqiyatli o'tdi.
+  - Barcha testlar to'plami: **45/45 test muvaffaqiyatli (M0–M6)**.

@@ -10,12 +10,14 @@ import Editor from './pages/Editor';
 import Flashcards from './pages/Flashcards';
 import Pricing from './pages/Pricing';
 import Admin from './pages/Admin';
+import Library from './pages/Library';
+import PublicQuiz from './pages/PublicQuiz';
 import Terms from './pages/legal/Terms';
 import Privacy from './pages/legal/Privacy';
 import Refund from './pages/legal/Refund';
 import Contacts from './pages/legal/Contacts';
 import Navbar from './components/Navbar';
-import { Sparkles, Layers, History as HistoryIcon, LayoutGrid, Flame, Crown } from 'lucide-react';
+import { Sparkles, Layers, History as HistoryIcon, LayoutGrid, Flame, Crown, BookOpen } from 'lucide-react';
 import { cn } from './lib/utils';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -45,6 +47,7 @@ function FloatingBottomNav() {
 
   const navItems = [
     { path: '/', label: 'Asosiy', icon: LayoutGrid },
+    { path: '/library', label: 'Kutubxona', icon: BookOpen },
     { path: '/history', label: 'Tarix & Baza', icon: HistoryIcon },
     { path: '/pricing', label: 'Tariflar', icon: Crown },
   ];
@@ -107,6 +110,8 @@ export default function App() {
                  <Route path="/flashcards/:quizId" element={<ProtectedRoute><Flashcards /></ProtectedRoute>} />
                  <Route path="/result/:resultId" element={<ProtectedRoute><Result /></ProtectedRoute>} />
                  <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+                 <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
+                 <Route path="/q/:slug" element={<PublicQuiz />} />
                  <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
                  <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
                  {/* Ochiq huquqiy sahifalar */}
