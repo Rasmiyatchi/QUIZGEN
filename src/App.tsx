@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Home from './pages/Home';
@@ -12,12 +12,17 @@ import Pricing from './pages/Pricing';
 import Admin from './pages/Admin';
 import Library from './pages/Library';
 import PublicQuiz from './pages/PublicQuiz';
+import CreateQuiz from './pages/CreateQuiz';
+import Profile from './pages/Profile';
+import NotFound from './pages/NotFound';
 import Terms from './pages/legal/Terms';
 import Privacy from './pages/legal/Privacy';
 import Refund from './pages/legal/Refund';
 import Contacts from './pages/legal/Contacts';
 import Navbar from './components/Navbar';
-import { Sparkles, Layers, History as HistoryIcon, LayoutGrid, Flame, Crown, BookOpen } from 'lucide-react';
+import ErrorBoundary from './components/ErrorBoundary';
+import { initTMA } from './lib/telegram-tma';
+import { Sparkles, Layers, History as HistoryIcon, LayoutGrid, Flame, Crown, BookOpen, PlusCircle, User } from 'lucide-react';
 import { cn } from './lib/utils';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -47,9 +52,10 @@ function FloatingBottomNav() {
 
   const navItems = [
     { path: '/', label: 'Asosiy', icon: LayoutGrid },
+    { path: '/create', label: 'Yaratish', icon: PlusCircle },
     { path: '/library', label: 'Kutubxona', icon: BookOpen },
-    { path: '/history', label: 'Tarix & Baza', icon: HistoryIcon },
-    { path: '/pricing', label: 'Tariflar', icon: Crown },
+    { path: '/history', label: 'Tarix', icon: HistoryIcon },
+    { path: '/profile', label: 'Profil', icon: User },
   ];
 
   return (
@@ -89,43 +95,53 @@ function FloatingBottomNav() {
 }
 
 export default function App() {
-  return (
-    <AuthProvider>
-      <BrowserRouter>
-        <div className="flex flex-col h-screen overflow-hidden text-slate-100 font-sans relative isolate mesh-gradient-bg">
-          {/* Ambient Lighting Orbs */}
-          <div className="absolute top-[-80px] left-[-80px] w-96 h-96 bg-blue-600/15 rounded-full blur-[120px] pointer-events-none -z-10"></div>
-          <div className="absolute top-[20%] right-[-100px] w-96 h-96 bg-purple-600/15 rounded-full blur-[130px] pointer-events-none -z-10"></div>
-          <div className="absolute bottom-[-100px] left-[30%] w-96 h-96 bg-emerald-600/10 rounded-full blur-[140px] pointer-events-none -z-10"></div>
+  useEffect(() => {
+    initTMA();
+  }, []);
 
-          {/* Main Scrollable View */}
-          <main className="flex flex-col flex-1 overflow-x-hidden overflow-y-auto pb-safe no-scrollbar">
-             <Navbar />
-             <div className="w-full pb-24 md:pb-12">
-               <Routes>
-                 <Route path="/login" element={<Login />} />
-                 <Route path="/" element={<ProtectedRoute><Home /></ProtectedRoute>} />
-                 <Route path="/quiz/:quizId" element={<ProtectedRoute><Quiz /></ProtectedRoute>} />
-                 <Route path="/editor/:quizId" element={<ProtectedRoute><Editor /></ProtectedRoute>} />
-                 <Route path="/flashcards/:quizId" element={<ProtectedRoute><Flashcards /></ProtectedRoute>} />
-                 <Route path="/result/:resultId" element={<ProtectedRoute><Result /></ProtectedRoute>} />
-                 <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
-                 <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
-                 <Route path="/q/:slug" element={<PublicQuiz />} />
-                 <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
-                 <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
-                 {/* Ochiq huquqiy sahifalar */}
-                 <Route path="/oferta" element={<Terms />} />
-                 <Route path="/privacy" element={<Privacy />} />
-                 <Route path="/refund" element={<Refund />} />
-                 <Route path="/contacts" element={<Contacts />} />
-               </Routes>
-             </div>
-          </main>
-          
-          <FloatingBottomNav />
-        </div>
-      </BrowserRouter>
-    </AuthProvider>
+  return (
+    <ErrorBoundary>
+      <AuthProvider>
+        <BrowserRouter>
+          <div className="flex flex-col h-screen overflow-hidden text-slate-100 font-sans relative isolate mesh-gradient-bg">
+            {/* Ambient Lighting Orbs */}
+            <div className="absolute top-[-80px] left-[-80px] w-96 h-96 bg-blue-600/15 rounded-full blur-[120px] pointer-events-none -z-10"></div>
+            <div className="absolute top-[20%] right-[-100px] w-96 h-96 bg-purple-600/15 rounded-full blur-[130px] pointer-events-none -z-10"></div>
+            <div className="absolute bottom-[-100px] left-[30%] w-96 h-96 bg-emerald-600/10 rounded-full blur-[140px] pointer-events-none -z-10"></div>
+
+            {/* Main Scrollable View */}
+            <main className="flex flex-col flex-1 overflow-x-hidden overflow-y-auto pb-safe no-scrollbar">
+               <Navbar />
+               <div className="w-full pb-24 md:pb-12">
+                 <Routes>
+                   <Route path="/login" element={<Login />} />
+                   <Route path="/" element={<Home />} />
+                   <Route path="/create" element={<ProtectedRoute><CreateQuiz /></ProtectedRoute>} />
+                   <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+                   <Route path="/quiz/:quizId" element={<ProtectedRoute><Quiz /></ProtectedRoute>} />
+                   <Route path="/editor/:quizId" element={<ProtectedRoute><Editor /></ProtectedRoute>} />
+                   <Route path="/flashcards/:quizId" element={<ProtectedRoute><Flashcards /></ProtectedRoute>} />
+                   <Route path="/result/:resultId" element={<ProtectedRoute><Result /></ProtectedRoute>} />
+                   <Route path="/history" element={<ProtectedRoute><History /></ProtectedRoute>} />
+                   <Route path="/library" element={<ProtectedRoute><Library /></ProtectedRoute>} />
+                   <Route path="/q/:slug" element={<PublicQuiz />} />
+                   <Route path="/pricing" element={<ProtectedRoute><Pricing /></ProtectedRoute>} />
+                   <Route path="/admin" element={<ProtectedRoute><Admin /></ProtectedRoute>} />
+                   {/* Ochiq huquqiy sahifalar */}
+                   <Route path="/oferta" element={<Terms />} />
+                   <Route path="/privacy" element={<Privacy />} />
+                   <Route path="/refund" element={<Refund />} />
+                   <Route path="/contacts" element={<Contacts />} />
+                   {/* 404 sahifa */}
+                   <Route path="*" element={<NotFound />} />
+                 </Routes>
+               </div>
+            </main>
+            
+            <FloatingBottomNav />
+          </div>
+        </BrowserRouter>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

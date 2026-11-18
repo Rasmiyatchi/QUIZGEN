@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { LogOut, Flame, Sparkles, Send, ShieldCheck, Zap, Crown, BookOpen } from 'lucide-react';
+import { LogOut, Flame, Sparkles, Send, ShieldCheck, Zap, Crown, BookOpen, PlusCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 
@@ -15,7 +15,7 @@ export default function Navbar() {
   return (
     <header className="h-[72px] flex items-center justify-between px-4 sm:px-8 z-40 sticky top-0 bg-[#0c121e]/70 backdrop-blur-2xl border-b border-white/[0.07]">
       {/* Profil Ma'lumotlari */}
-      <div className="flex items-center gap-3">
+      <Link to="/profile" className="flex items-center gap-3 hover:opacity-85 transition-opacity">
         <div className="relative">
           {user.photoURL ? (
             <img 
@@ -48,10 +48,18 @@ export default function Navbar() {
             {user.username ? `@${user.username}` : "Telegram User"}
           </span>
         </div>
-      </div>
+      </Link>
       
       {/* Badjlar va Chiqish */}
       <div className="flex items-center gap-2 sm:gap-2.5">
+        {/* Test yaratish tugmasi */}
+        <Link
+          to="/create"
+          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-black bg-blue-600 hover:bg-blue-500 text-white shadow-sm shadow-blue-600/30 transition-all"
+        >
+          <PlusCircle className="w-3.5 h-3.5" />
+          <span>Yaratish</span>
+        </Link>
         {/* Admin panel tugmasi */}
         {(user.role === 'admin' || user.role === 'superadmin') && (
           <Link

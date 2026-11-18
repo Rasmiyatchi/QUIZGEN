@@ -64,6 +64,16 @@ export function verifyTelegramWebAppData(initData: string, botToken: string): { 
       return { valid: false };
     }
 
+    // S8: auth_date tekshiruvi (Replay attack oldini olish: maksimal 24 soat)
+    const authDateStr = urlParams.get('auth_date');
+    if (authDateStr) {
+      const authDate = Number(authDateStr);
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (nowSec - authDate > 86400) {
+        return { valid: false };
+      }
+    }
+
     const userRaw = urlParams.get('user');
     const user = userRaw ? JSON.parse(userRaw) : undefined;
 

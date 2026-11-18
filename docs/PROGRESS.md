@@ -11,8 +11,8 @@
 | **M4** | **Test Yaratish Yadrosi va HEMIS Parser v3** | **Yakunlandi** | `v3/m4-bot-creation` |
 | **M5** | **Server Urinishlari, Yechish Tajribasi va Gamifikatsiya** | **Yakunlandi** | `v3/m5-attempts` |
 | **M6** | **Kutubxona Moduli (Library, Public, Folders, Fork)** | **Yakunlandi** | `v3/m6-library` |
-| **M7** | Veb va Mini App Sayqali | Navbatda | `v3/m7-web-tma` |
-| **M8** | Admin v2 & Xabarnoma | Kutilmoqda | `v3/m8-admin-v2` |
+| **M7** | **Veb va Mini App Sayqali (Landing, /create, Profile, TMA SDK)** | **Yakunlandi** | `v3/m7-web-tma` |
+| **M8** | Admin v2 & Xabarnoma | Navbatda | `v3/m8-admin-v2` |
 | **M9** | Sifat, Yuklama & Ishga Tushirish | Kutilmoqda | `v3/m9-release` |
 
 ---
@@ -173,3 +173,37 @@
 - [x] **Avtomatlashgan Testlar:**
   - `tests/m6-library.test.ts` da 6/6 test 100% muvaffaqiyatli o'tdi.
   - Barcha testlar to'plami: **45/45 test muvaffaqiyatli (M0–M6)**.
+
+---
+
+## M7 — Veb va Mini App Sayqali Qabul Mezonlari (TZ 9-bo'lim) Tekshiruvi
+
+- [x] **Mehmonlar uchun Landing Page (`/`):**
+  - Tizimga kirmagan tashrif buyuruvchilar uchun konversion va zamonaviy `Landing.tsx` sahifasi.
+  - Sarlavha: "HEMIS testlarini soniyalarda onlayn testga aylantiring", 3 qadam (Fayl yuklash -> Testga aylanish -> Yechish va natija).
+  - CTA tugmalari: Telegram orqali boshlash (`/login`), Ommaviy Kutubxona (`/library`), Botga o'tish.
+  - 4 ta asosiy afzallik, tariflar qisqacha ko'rinishi, FAQ akordeoni va huquqiy havolalar bilan to'liq footer.
+  - Agar foydalanuvchi tizimga kirgan bo'lsa, avtomatik ravishda shaxsiy boshqaruv paneli (Dashboard) ochiladi.
+- [x] **Test Yaratish Ustasi (`/create`):**
+  - Bot bilan bir xil 4 ta rejim:
+    1. 📁 **Fayl yuklash:** `.docx`, `.pdf`, `.txt` drag & drop yuklash, progress, `ParseReport` ogohlantirishlari.
+    2. 📝 **Matndan:** HEMIS formatidagi xom matnni to'g'ridan-to'g'ri joylash.
+    3. ✨ **Gemini AI:** Mavzu, savollar soni (5–20 ta), qiyinlik darajasi (Oson, O'rtacha, Qiyin), qo'shimcha konspekt kiritish.
+    4. ✍️ **Qo'lda:** Savolma-savol tuzish, variantlar, to'g'ri javobni radio-tugma bilan belgilash.
+  - Muvaffaqiyatli yaratilgandan so'ng testni darhol boshlash, flashcardlar yoki muharrirga o'tish tugmalari.
+- [x] **Foydalanuvchi Profili va Sozlamalar (`/profile`):**
+  - Avatar, ism, Telegram ID, username, rol, obuna holati, qolgan kunlar.
+  - Haqiqiy gamifikatsiya ko'rsatkichlari: XP progress-bar, daraja (`rank_title`), ketma-ket kunlar (`streak_days`).
+  - Topshirilgan testlar soni, o'rtacha ball, eng yuqori ball, yaratilgan testlar soni.
+  - Tezkor havolalar (Kutubxonam, Urinishlar tarixi) va tizimdan chiqish.
+- [x] **Telegram Mini App (TMA) SDK Integratsiyasi:**
+  - `src/lib/telegram-tma.ts`: `initTMA()`, `setClosingConfirmation()`, `triggerHaptic()`, `setBackButton()`, `setMainButton()`.
+  - Imtihon jarayonida sahifadan tasodifan chiqib ketishning oldini olish (`enableClosingConfirmation()`).
+  - Javob tanlanganda va tekshirilganda Haptic Feedback (tebranish: `selection`, `notification(success/error)`).
+  - Replay attack xavfsizligi (S8): `auth_date` 24 soatdan eski bo'lsa serverda qat'iy rad etiladi.
+- [x] **Xatoliklar va 404 Boshqaruvi:**
+  - `src/components/ErrorBoundary.tsx` — kutilmagan render xatoliklarini ushlaydi va ilova o'chib qolishining oldini oladi.
+  - `src/pages/NotFound.tsx` — mavjud bo'lmagan yo'llar uchun zamonaviy 404 sahifa.
+- [x] **Avtomatlashgan Testlar:**
+  - `tests/m7-web-tma.test.ts` da 4/4 test 100% muvaffaqiyatli o'tdi.
+  - Barcha testlar to'plami: **49/49 test muvaffaqiyatli (M0–M7)**.

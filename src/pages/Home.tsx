@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import Landing from './Landing';
 import { 
   UploadCloud, Loader2, FileCheck2, XCircle, ArrowRight, FileText, 
   Layers, BookOpen, ArrowLeft, Info, Sparkles, Cpu, Send, Edit3, 
@@ -11,6 +12,7 @@ import { cn } from '../lib/utils';
 type ViewMode = 'menu' | 'upload' | 'guide';
 
 export default function Home() {
+  const { user, loading: authLoading, authFetch } = useAuth();
   const [view, setView] = useState<ViewMode>('menu');
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
@@ -23,7 +25,10 @@ export default function Home() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
-  const { user, authFetch } = useAuth();
+
+  if (!authLoading && !user) {
+    return <Landing />;
+  }
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();

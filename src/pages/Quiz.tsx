@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { triggerHaptic, setClosingConfirmation } from '../lib/telegram-tma';
 import { 
   Loader2, ArrowRight, ArrowLeft, CheckCircle2, XCircle, X, Shuffle, 
   Clock, Flag, LayoutGrid, Check, AlertTriangle
@@ -70,6 +71,13 @@ export default function Quiz() {
 
   const quizRef = useRef<QuizData | null>(null);
   quizRef.current = quiz;
+
+  useEffect(() => {
+    setClosingConfirmation(true);
+    return () => {
+      setClosingConfirmation(false);
+    };
+  }, []);
 
   useEffect(() => {
     async function fetchQuiz() {
@@ -244,11 +252,7 @@ export default function Quiz() {
     setAnswers(newAnswers);
 
     // Telegram Haptic
-    if (window.Telegram?.WebApp && (window.Telegram.WebApp as any).HapticFeedback) {
-      try {
-        (window.Telegram.WebApp as any).HapticFeedback.selectionChanged();
-      } catch {}
-    }
+    triggerHaptic('selection');
 
     // O'rganish rejimida serverdan darhol javob va tushuntirish tekshiruvi (Section 8.5)
     if (mode === 'study' && currentAttemptId) {
@@ -260,6 +264,11 @@ export default function Quiz() {
         });
         if (res.ok) {
           const data = await res.json();
+          if (data.isCorrect) {
+            triggerHaptic('notification', 'success');
+          } else {
+            triggerHaptic('notification', 'error');
+          }
           setStudyFeedback(prev => ({
             ...prev,
             [currentIndex]: {
@@ -411,6 +420,7 @@ export default function Quiz() {
         localStorage.setItem(`quiz_${quizId}`, JSON.stringify(currentQuiz));
       }
 
+      setClosingConfirmation(false);
       navigate(`/result/${resultId}`);
     } catch (err: any) {
       console.error(err);
